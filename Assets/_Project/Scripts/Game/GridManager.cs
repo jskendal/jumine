@@ -63,7 +63,7 @@ public class GridManager : MonoBehaviour
             cell.transform.localPosition = new Vector3(
                 c * cellSize,
                 0f,
-                rows * cellSize
+                rows * cellSize + 0.5f
             );
             
             // Rendre semi-transparente
@@ -148,14 +148,17 @@ public class GridManager : MonoBehaviour
     {
         if (row >= 0 && row < rows && col >= 0 && col < columns)
         {
+            // Position LOCALE dans le grid
             Vector3 localPos = new Vector3(col * cellSize, 0.5f, row * cellSize);
+            
+            // Convertir en position MONDE
             Vector3 worldPos = transform.TransformPoint(localPos);
             
-            // DEBUG
-            //Debug.Log($"GetCellWorldPosition({row},{col}) -> local: {localPos}, world: {worldPos}");
+            //Debug.Log($"GetCellWorldPosition({row},{col}): local={localPos}, world={worldPos}, gridPos={transform.position}");
             
             return worldPos;
         }
+        
         return Vector3.zero;
     }
     
@@ -230,5 +233,35 @@ public class GridManager : MonoBehaviour
     public void ClearSelectableCells()
     {
         selectableCells.Clear();
+    }
+
+
+    public enum CellType
+    {
+        Neutral,
+        HealthPotion,   // Vert (+ vie)
+        DamageBomb      // Rouge (- vie)
+        // On ajoutera plus tard : Missile, Nuclear, SpeedBoost, etc.
+    }
+
+    public CellType GetCellType(int row, int col)
+    {
+        if (row < 0 || row >= rows || col < 0 || col >= columns) 
+            return CellType.Neutral;
+        
+        if (gridCells[row, col] == null) 
+            return CellType.Neutral;
+        
+        Cell cellScript = gridCells[row, col].GetComponent<Cell>();
+        if (cellScript == null) 
+            return CellType.Neutral;
+        
+        // UTILISE TES BOOLS EXISTANTS
+        if (cellScript.isBonus)
+            return CellType.HealthPotion; // Vert = bonus santé
+        else if (cellScript.isMalus)
+            return CellType.DamageBomb;   // Rouge = dégâts
+        else
+            return CellType.Neutral;
     }
 }

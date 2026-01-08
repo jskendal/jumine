@@ -27,14 +27,15 @@ public class Player : MonoBehaviour
     private bool isPoisoned = false;
     private float poisonTimer = 0f;
     
+    public int poisonTurnsRemaining = 0;
+    public int poisonDamagePerTurn = 0;
+
     // Timer d'effets
     private float effectTimer = 0f;
     private BonusMalusType currentEffect = BonusMalusType.HealthPotion;
  
     private GameObject healthBarCanvas;
-    private GameObject healthBarBackground;
-    private GameObject healthBarFill;
-
+ 
     [Header("Références")]
     public GameManager gameManager;
 
@@ -57,7 +58,9 @@ public class Player : MonoBehaviour
             }
         }
         
-        // Poison : dégâts continus
+    // 🔥 FIX 3 : Commente ce tick automatique qui tue tout en temps réel
+        // Le poison sera appliqué manuellement à la fin de chaque tour plus tard
+        /*
         if (isPoisoned)
         {
             poisonTimer -= Time.deltaTime;
@@ -67,9 +70,10 @@ public class Player : MonoBehaviour
             }
             else if (Time.frameCount % 30 == 0) // Dégât toutes les 0.5 sec environ
             {
-                TakeDamage(10);
+                TakeDamage(10); // <-- ÇA C'EST LE PROBLÈME !
             }
         }
+        */
     }
  
 
@@ -139,6 +143,7 @@ public class Player : MonoBehaviour
 
     public void TakeDamage(int damage)
     {
+            Debug.Log($"[TakeDamage] Tentative de dégâts sur PlayerID: {this.playerID}. GO: {this.gameObject.name}");
         if (isInvincible) return;
         
         health -= damage;
@@ -162,6 +167,24 @@ public class Player : MonoBehaviour
         Debug.Log($"Player {playerID} healed {amount}. Health: {health}");
     }
     
+    public void ApplyPoison(int turns, int damagePerTurn)
+    {
+        poisonTurnsRemaining = turns;
+        poisonDamagePerTurn = damagePerTurn;
+        Debug.Log($"Player {playerID} empoisonné pour {turns} tours ({damagePerTurn} dmg/tour)");
+    }
+
+// Appelé à la fin de CHAQUE tour par le GameManager
+    public void ProcessTurnEndEffects()
+    {
+        if (poisonTurnsRemaining > 0)
+        {
+            TakeDamage(poisonDamagePerTurn);
+            poisonTurnsRemaining--;
+            Debug.Log($"Poison tick on Player {playerID}. Remaining turns: {poisonTurnsRemaining}");
+        }
+    }
+
     public void ApplySpeedBoost(float multiplier, float duration)
     {
         speedMultiplier = multiplier;
@@ -187,14 +210,3 @@ public class Player : MonoBehaviour
             Destroy(healthBarCanvas);
     }
 }
-    public class Billboard : MonoBehaviour
-    {
-        void Update()
-        {
-            if (Camera.main != null)
-            {
-                // Toujours face à la caméra
-                transform.rotation = Camera.main.transform.rotation;
-            }
-        }
-    }

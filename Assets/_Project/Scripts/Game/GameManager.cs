@@ -32,34 +32,27 @@ public class GameManager : MonoBehaviour
     private float rowTimer = 0f;
     private float selectionTimer = 0f;
     private bool isSelectionPhase = true;
-    private GameObject[] players;
+    public GameObject[] players;
     private int controlledPlayerIndex = 0;
     private List<GameObject> highlightedBorders = new List<GameObject>();
-    
+    public static GameManager instance;
 
     [Header("Health UI")]
     public Slider[] playerHealthSliders; // Size = 4
     public TMPro.TextMeshProUGUI[] playerLabels; // Size = 4
     
+    private bool hasDoneSpawnPlayers = false;
+
+    private Vector2Int[] playerTargets = new Vector2Int[4];
     void Start()
     {
-        //if (mainCamera == null) mainCamera = Camera.main;
-        // if (mainCamera == null)
-        // {
-        //     mainCamera = Camera.main;
-        //     if (mainCamera == null)
-        //     {
-        //         // Option 2 : Cherche n'importe quelle caméra
-        //         Camera[] cameras = FindObjectsOfType<Camera>();
-        //         if (cameras.Length > 0)
-        //             mainCamera = cameras[0];
-        //     }
-        // }
         StartCoroutine(StartGameAfterGridReady());
 
         InitializeHealthUI();
     }
-
+    void Awake() {
+        instance = this;
+    }
     void InitializeHealthUI()
     {
         if (playerHealthSliders == null || playerHealthSliders.Length < 4) 
@@ -76,11 +69,18 @@ public class GameManager : MonoBehaviour
                 playerHealthSliders[i].value = 100; // Mettre à 100% pour tous
                 
                 // Important : S'assurer que le fill est visible
-                Image fillImage = playerHealthSliders[i].fillRect.GetComponent<Image>();
-                if (fillImage != null)
+                if(playerHealthSliders[i].fillRect == null)
                 {
-                    fillImage.enabled = true;
-                    fillImage.color = GetPlayerColor(i); // Utiliser ta couleur de joueur
+                    
+                }
+                else
+                {
+                    Image fillImage = playerHealthSliders[i].fillRect.GetComponent<Image>();
+                    if (fillImage != null)
+                    {
+                        fillImage.enabled = true;
+                        fillImage.color = GetPlayerColor(i); // Utiliser ta couleur de joueur
+                    }
                 }
             }
         }
@@ -94,26 +94,45 @@ public class GameManager : MonoBehaviour
     
     public void UpdatePlayerHealthBar(int playerIndex, int health)
     {
-        if (playerIndex < 0 || playerIndex >= 4) return;
-        if (playerHealthSliders[playerIndex] == null) return;
-        
+        if (playerIndex < 0 || playerIndex >= playerHealthSliders.Length) return; // Sécurité de l'index
+        if (playerHealthSliders[playerIndex] == null) {
+            Debug.LogWarning($"Slider UI for player {playerIndex + 1} is not assigned in the Inspector.");
+            return;
+        }
+
+        Slider targetSlider = playerHealthSliders[playerIndex];
+
         // Mettre à jour la valeur
-        playerHealthSliders[playerIndex].value = health;
+        targetSlider.value = health;
         
-        // Récupérer l'image du fill
-        Image fillImage = playerHealthSliders[playerIndex].fillRect.GetComponent<Image>();
-        
+        // Récupérer l'Image du "fill"
+        // 🔥 CORRECTION : On cherche l'Image sur le `fillRect` ou sur un de ses enfants
+        Image fillImage = null;
+        if (targetSlider.fillRect != null)
+        {
+            fillImage = targetSlider.fillRect.GetComponent<Image>();
+            if (fillImage == null && targetSlider.fillRect.childCount > 0)
+            {
+                // Tente de trouver l'image sur le premier enfant du fillRect (ex: GameObject "Fill")
+                fillImage = targetSlider.fillRect.GetChild(0).GetComponent<Image>();
+            }
+        }
+
+        if (fillImage == null)
+        {
+            Debug.LogWarning($"No Image component found on Fill Rect or its first child for player {playerIndex + 1}. Cannot update health bar color/visibility.");
+            return; // Ne peut pas continuer sans l'Image
+        }
+
         if (health <= 0)
         {
-            // Désactiver le fill quand PV = 0
-            fillImage.enabled = false;
+            fillImage.enabled = false; // Cache la barre de vie
+            // Tu peux aussi désactiver le Slider entier ou son GameObject pour un joueur KO
+            // targetSlider.gameObject.SetActive(false); 
         }
         else
         {
-            // Réactiver le fill si besoin
-            if (!fillImage.enabled)
-                fillImage.enabled = true;
-            
+            if (!fillImage.enabled) fillImage.enabled = true;
             fillImage.color = GetPlayerColor(playerIndex);
         }
     }
@@ -172,8 +191,13 @@ public class GameManager : MonoBehaviour
             players[i] = Instantiate(playerPrefab, spawnPos, Quaternion.identity);
             players[i].name = $"Player_{i+1}";
             
-            if (players[i].GetComponent<Player>() == null)
-                players[i].AddComponent<Player>();
+            Player playerScript = players[i].GetComponent<Player>();
+            if (playerScript == null)
+                playerScript = players[i].AddComponent<Player>();
+            
+            // Assigner l’ID et la vie
+            playerScript.playerID = i;
+            playerScript.health = 100;
             
             Renderer rend = players[i].GetComponent<Renderer>();
             if (rend != null)
@@ -182,15 +206,33 @@ public class GameManager : MonoBehaviour
                 rend.material.color = colors[i];
             }
         }
+        hasDoneSpawnPlayers = true;
     }
     
     void StartSelectionPhase()
     {
         isSelectionPhase = true;
         selectionTimer = selectionTime;
+
+        // Initialiser les cibles par défaut (rester sur place)
+        for (int i = 0; i < 4; i++)
+        {
+            if (players[i] != null && players[i].activeSelf)
+            {
+                Vector2Int current = GetPlayerCurrentCell(i);
+                playerTargets[i] = current; // Par défaut: rester sur place
+            }
+        }
+
         StartCoroutine(ShowHighlightsAfterDelay(0.1f));
     }
     
+    public void SetPlayerTarget(int playerIndex, int row, int col)
+    {
+        playerTargets[playerIndex] = new Vector2Int(row, col);
+        Debug.Log($"Joueur {playerIndex + 1} a choisi la case ({row}, {col})");
+    }
+
     IEnumerator ShowHighlightsAfterDelay(float delay)
     {
         yield return new WaitForSeconds(delay);
@@ -286,128 +328,193 @@ public class GameManager : MonoBehaviour
         int savedRow = -1;
         int savedCol = -1;
         
-        if (Cell.selectedCell != null)
-        {
-            savedRow = Cell.selectedCell.row;
-            savedCol = Cell.selectedCell.col;
-            Debug.Log($"Cellule sélectionnée: ({savedRow},{savedCol}) - SAUVEGARDÉ");
-        }
-        else
-        {
-            Vector2Int currentCell = GetPlayerCurrentCell(controlledPlayerIndex);
-            savedRow = currentCell.x;
-            savedCol = currentCell.y;
-            // Debug.Log($"Aucune sélection, joueur reste sur: ({savedRow},{savedCol})");
-        }
+        // if (Cell.selectedCell != null)
+        // {
+        //     savedRow = Cell.selectedCell.row;
+        //     savedRow = playerTargets[0].x;
+        //     savedCol = Cell.selectedCell.col;
+        //     Debug.Log($"Cellule sélectionnée: ({savedRow},{savedCol}) - SAUVEGARDÉ");
+        // }
+        // else
+        // {
+        //     Vector2Int currentCell = GetPlayerCurrentCell(controlledPlayerIndex);
+        //     savedRow = currentCell.x;
+        //     savedCol = currentCell.y;
+        //     // Debug.Log($"Aucune sélection, joueur reste sur: ({savedRow},{savedCol})");
+        // }
         gridManager.InsertRow();
 
         // 3. Faire sauter les joueurs
         StartCoroutine(MoveAllPlayers(savedRow, savedCol));
         
-        StartCoroutine(CheckBonusMalusAfterJump(savedRow, savedCol));
+        if(hasDoneSpawnPlayers)  
+            StartCoroutine(ResolveTurnEffects());
     }
 
-    IEnumerator CheckBonusMalusAfterJump(int savedRow, int savedCol)
+    IEnumerator ResolveTurnEffects()
     {
-        // 1. Attendre la fin du saut
-        yield return new WaitForSeconds(jumpDuration + 0.1f);
-        
-        // 2. Vérifier le type de case (si cellule valide)
-        if (savedRow >= 0 && savedCol >= 0)
+        // 1. Attendre la fin de l'anim de saut
+        yield return new WaitForSeconds(jumpDuration + 0.2f);
+
+        // 2. Liste des vivants
+        List<int> activePlayers = new List<int>();
+        for (int i = 0; i < players.Length; i++)
         {
-            CellType cellType = gridManager.GetCellType(savedRow, savedCol);
-            Debug.Log($"🎯 Joueur a atterri sur: {cellType} à ({savedRow},{savedCol})");
-            
-            // 3. Si c'est un bonus/malus, attendre et appliquer
-            if (cellType != CellType.Neutral)
+            if (players[i] != null && players[i].activeSelf) activePlayers.Add(i);
+        }
+
+        // 3. Mélanger l'ordre (Random)
+        activePlayers = ShuffleList(activePlayers);
+
+        Debug.Log("--- RÉSOLUTION DES EFFETS ---");
+
+        foreach (int playerIndex in activePlayers)
+        {
+            // Où est ce joueur MAINTENANT ?
+            Vector3 playerPos = players[playerIndex].transform.position;
+            Vector2Int currentCell = gridManager.GetCellFromWorldPosition(playerPos);
+
+            // Quel est l'effet sous ses pieds ?
+            // (Note: gridManager.GetCellEffect doit exister, voir plus bas*)
+            CellEffect effect = gridManager.GetCellEffect(currentCell.x, currentCell.y);
+
+            if (effect.type != EffectType.Neutral)
             {
-                Debug.Log("⏳ Attente de 2 secondes avant effet...");
-                yield return new WaitForSeconds(2f);
-                
-                // 4. Appliquer effet au joueur concerné
-                ApplyEffectToPlayer(controlledPlayerIndex, cellType);
-            }
-            else
-            {
-                Debug.Log("⚪ Case neutre, attente courte");
-                yield return new WaitForSeconds(0.5f);
+                Debug.Log($"Joueur {playerIndex + 1} active : {effect.type}");
+                yield return StartCoroutine(ApplyEffectToPlayerCoroutine(playerIndex, effect, currentCell));
+                yield return new WaitForSeconds(0.5f); // Pause dramatique
             }
         }
-        else
+
+        // 2. Résolution des effets PERSISTANTS (poison, etc.) – une fois par tour
+        for (int i = 0; i < players.Length; i++)
         {
-            // Aucune cellule sélectionnée
-            Debug.Log("❌ Aucune cellule sélectionnée");
-            yield return new WaitForSeconds(0.5f);
+            if (players[i] == null || !players[i].activeSelf) continue;
+            Player p = players[i].GetComponent<Player>();
+            if (p != null)
+            {
+                p.ProcessTurnEndEffects();
+            }
         }
-        
-        // 5. Repartir le TimerSlider
+
+        // 4. Fin du tour
+        CheckGameOver(); // (Ta méthode ou une simple vérification)
         StartSelectionPhase();
     }
-    
-    void ApplyEffectToPlayer(int playerIndex, CellType cellType)
+
+    List<int> ShuffleList(List<int> list)
     {
-        if (playerIndex < 0 || playerIndex >= players.Length) return;
-        if (players[playerIndex] == null) return;
-        
-        Player playerScript = players[playerIndex].GetComponent<Player>();
-        if (playerScript == null) return;
-        
-        switch (cellType)
+        for (int i = 0; i < list.Count; i++) {
+            int temp = list[i];
+            int randomIndex = Random.Range(i, list.Count);
+            list[i] = list[randomIndex];
+            list[randomIndex] = temp;
+        }
+        return list;
+    }
+
+    IEnumerator ApplyEffectToPlayerCoroutine(int playerIndex, CellEffect effect, Vector2Int cellCoord)
+    {
+         Player p = players[playerIndex].GetComponent<Player>();
+        if (p == null) yield break;
+
+        switch (effect.type)
         {
-            case CellType.HealthPotion:
-                playerScript.Heal(30);
-                Debug.Log($"💚 Joueur {playerIndex+1} gagne 30 PV");
+            case EffectType.HealthPotion:
+                p.Heal(effect.value);
+                // Afficher icône coeur
                 break;
+
+            case EffectType.DamageBomb:
+                p.TakeDamage(effect.value);
+                // Afficher icône explosion
+                break;
+
+            case EffectType.Poison:
+                // Ici : pas de dégâts immédiats, on programme 3 tours de poison
+                p.ApplyPoison((int)effect.duration, effect.value);
+                break;
+
+            case EffectType.Missile:
+                // CAS SPÉCIAL : Le joueur qui marche sur le missile subit les dégâts ET déclenche l'arme
+                //Non pas de //p.TakeDamage(effect.value); // Il se blesse en marchant dessus (ou pas, selon règles)
+                //peut-etre plus tard un autre type de missile qui blesse aussi le déclencheur
                 
-            case CellType.DamageBomb:
-                playerScript.TakeDamage(30);
-                Debug.Log($"💥 Joueur {playerIndex+1} perd 30 PV");
+                // On déclenche l'effet d'arme sur la grille
+                ApplyWeaponEffect(effect, cellCoord, playerIndex);
                 break;
-                
-            default:
-                Debug.Log($"❓ Effet non implémenté: {cellType}");
-                break;
+        }
+        
+        yield return null;
+    }
+
+    void ApplyWeaponEffect(CellEffect effect, Vector2Int originCell, int triggeringPlayerIndex)
+    {
+        if (effect.type != EffectType.Missile) return;
+
+        Debug.Log($"🚀 MISSILE déclenché en ligne {originCell.x} !");
+
+        // On parcourt tous les joueurs pour voir s'ils sont sur la ligne de tir
+        for (int i = 0; i < players.Length; i++)
+        {
+            if (i == triggeringPlayerIndex) continue;
+            if (players[i] == null || !players[i].activeSelf) continue;
+
+            // On récupère la position actuelle du joueur i
+            Vector2Int playerPos = gridManager.GetCellFromWorldPosition(players[i].transform.position);
+
+            // Règle du Missile : Touche tout le monde sur la même LIGNE (Row)
+            if (playerPos.x == originCell.x)
+            {
+                Player pScript = players[i].GetComponent<Player>();
+                if (pScript != null)
+                {
+                    pScript.TakeDamage(effect.value);
+                    Debug.Log($"💥 Joueur {i + 1} touché par le missile !");
+                    // TODO: Ajouter particules explosion ici
+                }
+            }
+        }
+    }
+    void CheckGameOver()
+    {
+        int aliveCount = 0;
+        int lastSurvivor = -1;
+        
+        foreach(var p in players)
+        {
+            if(p != null && p.activeSelf)
+            {
+                aliveCount++;
+                lastSurvivor = System.Array.IndexOf(players, p);
+            }
+        }
+
+        if(aliveCount <= 1)
+        {
+            Debug.Log($"🏆 GAME OVER ! Vainqueur : Joueur {lastSurvivor + 1}");
+            isSelectionPhase = false; // Arrêter le jeu
+            // Afficher UI Victoire
         }
     }
 
     
     IEnumerator MoveAllPlayers(int savedRow = -1, int savedCol = -1)
     {
-        List<Coroutine> jumps = new List<Coroutine>();
-        if(players == null) yield break;
-        
-        Cell selectedCell = Cell.selectedCell;
-
         for (int i = 0; i < players.Length; i++)
         {
-            if (players[i] != null)
+            if (players[i] != null && players[i].activeSelf)
             {
-                Vector3 targetPosition;
+                // On récupère la cible enregistrée pour ce joueur
+                Vector2Int target = playerTargets[i];
+                Vector3 worldPos = gridManager.GetCellWorldPosition(target.x, target.y);
                 
-                if (i == controlledPlayerIndex && savedRow != -1 && savedCol != -1)
-                {
-                    // JOUEUR CONTRÔLÉ : saute sur la position SAUVEGARDÉE
-                    targetPosition = gridManager.GetCellWorldPosition(savedRow, savedCol);
-                    Debug.Log($"Joueur {i+1} saute sur ({savedRow},{savedCol})");
-                }
-                else
-                {
-                    // AUTRES JOUEURS : sautent sur place
-                    targetPosition = players[i].transform.position;
-                }
-                
-                Coroutine jump = StartCoroutine(JumpToPosition(players[i], targetPosition));
-                jumps.Add(jump);
+                StartCoroutine(JumpToPosition(players[i], worldPos));
             }
         }
         
-        foreach (var jump in jumps) yield return jump;
-        
-        // Après le saut, DÉSÉLECTIONNER la cellule
-        if (selectedCell != null)
-        {
-            selectedCell.Deselect();
-        }
+        yield return new WaitForSeconds(jumpDuration);
+        StartCoroutine(ResolveTurnEffects());
     }
     
     IEnumerator JumpToPosition(GameObject player, Vector3 targetPosition)

@@ -6,50 +6,68 @@ public class Cell : MonoBehaviour
     public bool isBonus = false;
     public bool isMalus = false;
     
+        [Header("Données de la Case")]
+    public CellEffect currentEffect; 
+    
     [Header("Matériaux")]
     public Material normalMaterial;
     public Material bonusMaterial;
     public Material malusMaterial;
+    public Material weaponMaterial; 
     
-    public static Cell selectedCell = null;
+    //public static Cell selectedCell = null;
 
     public int row, col;
     
     private GridManager gridManager;
+    private Renderer myRenderer;
 
-    void Start()
+    void Awake()
     {
+        myRenderer = GetComponent<Renderer>();
         //Debug.Log($"Cell {gameObject.name} - row={row}, col={col}, position={transform.position}");
         gridManager = FindObjectOfType<GridManager>();
         // Assigner une couleur aléatoire pour tester
-        SetupRandomType();
+        //SetupRandomType();
     }
     
-    void SetupRandomType()
+    
+    public void SetVisual(Color color, float alpha = 1f)
     {
-        float chance = Random.Range(0f, 1f);
+        if (myRenderer == null) myRenderer = GetComponent<Renderer>();
+        if (myRenderer == null) return;
+
+        Material mat = new Material(myRenderer.material);
+        mat.color = new Color(color.r, color.g, color.b, alpha);
         
-        Renderer rend = GetComponent<Renderer>();
-        
-        if (rend != null)
+        // Gérer le mode du shader (Opaque vs Transparent)
+        if (alpha < 1.0f)
         {
-            if (chance < 0.1f) // 10% bonus
-            {
-                rend.material = bonusMaterial != null ? bonusMaterial : CreateColorMaterial(Color.green);
-                isBonus = true;
-            }
-            else if (chance < 0.2f) // 10% malus
-            {
-                rend.material = malusMaterial != null ? malusMaterial : CreateColorMaterial(Color.red);
-                isMalus = true;
-            }
-            else // 80% normal
-            {
-                rend.material = normalMaterial != null ? normalMaterial : CreateColorMaterial(Color.white);
-            }
+            // Mode TRANSPARENT
+            mat.SetFloat("_Mode", 3);
+            mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+            mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+            mat.SetInt("_ZWrite", 0);
+            mat.DisableKeyword("_ALPHATEST_ON");
+            mat.EnableKeyword("_ALPHABLEND_ON");
+            mat.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+            mat.renderQueue = 3000;
         }
+        else
+        {
+            // Mode OPAQUE (très important de le remettre)
+            mat.SetFloat("_Mode", 0);
+            mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.One);
+            mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.Zero);
+            mat.SetInt("_ZWrite", 1);
+            mat.DisableKeyword("_ALPHABLEND_ON");
+            mat.renderQueue = -1; // Default
+        }
+
+        // Appliquer le material configuré
+        myRenderer.material = mat;
     }
-    
+
     Material CreateColorMaterial(Color color)
     {
         Material mat = new Material(Shader.Find("Standard"));
@@ -69,15 +87,23 @@ public class Cell : MonoBehaviour
         // Vérifie DIRECTEMENT dans GridManager si cette cellule est sélectionnable
         if (gridManager.IsCellSelectable(row, col))
         {
-            Debug.Log($"Cellule ({row},{col}) cliquée - SÉLECTIONNABLE!");
-            
-            // Désélectionne l'ancienne
-            if (selectedCell != null && selectedCell != this)
+                   // Désélectionner l'ancienne cellule visuellement
+            GameObject oldSelectedBorder = GameObject.FindWithTag("SelectedBorder");
+            if (oldSelectedBorder != null)
             {
-                selectedCell.Deselect();
+                // On enlève le tag pour ne plus la considérer comme "sélectionnée"
+                oldSelectedBorder.tag = "Untagged";
+                
+                // On la remet en cyan
+                oldSelectedBorder.GetComponent<Renderer>().material.color = new Color(0, 1, 1, 0.3f);
+        
             }
-            
-            // Sélectionne celle-ci
+
+            // Enregistrer la cible dans GameManager
+            GameManager gm = FindObjectOfType<GameManager>();
+            gm.SetPlayerTarget(0, row, col); // Joueur 0 = humain
+
+            // Sélectionner visuellement la nouvelle cellule
             Select();
         }
         else
@@ -89,15 +115,17 @@ public class Cell : MonoBehaviour
     
     public void Select()
     {
-        selectedCell = this;
-        Debug.Log($"SELECT: {name} (row={row}, col={col}) sélectionnée");
-        // Trouve la bordure par son nom
+        // On nettoie les anciennes sélections visuelles avant
+        //GameObject[] oldBorders = GameObject.FindGameObjectsWithTag("SelectedBorder"); 
+        // Note: Il faudra ajouter le Tag "SelectedBorder" à tes préfabriqués de bordure ou gérer par nom
+        
+        // Ton code actuel pour changer la couleur en Jaune est bon
         GameObject border = GameObject.Find($"Border_Selectable_{row}_{col}");
         if (border != null)
         {
             border.name = $"Border_Selected_{row}_{col}";
-            Renderer renderer = border.GetComponent<Renderer>();
-            renderer.material.color = new Color(1, 1, 0, 0.5f); // Jaune
+            border.tag = "SelectedBorder"; // Optionnel pour le nettoyage
+            border.GetComponent<Renderer>().material.color = new Color(1, 1, 0, 0.5f);
         }
     }
 
@@ -110,20 +138,5 @@ public class Cell : MonoBehaviour
             Renderer renderer = border.GetComponent<Renderer>();
             renderer.material.color = new Color(0, 1, 1, 0.3f); // Cyan
         }
-        
-        if (selectedCell == this)
-        {
-            selectedCell = null;
-        }
-    }
-
-    System.Collections.IEnumerator FlashCell()
-    {
-        Renderer rend = GetComponent<Renderer>();
-        Color originalColor = rend.material.color;
-        
-        rend.material.color = Color.yellow;
-        yield return new WaitForSeconds(0.2f);
-        rend.material.color = originalColor;
     }
 }

@@ -322,6 +322,7 @@ MonoBehaviour:
   jumpDuration: 0.5
   timerText: {fileID: 0}
   timerSlider: {fileID: 279854747}
+  players: []
   playerHealthSliders:
   - {fileID: 1639236426}
   - {fileID: 2070885142}
@@ -365,6 +366,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 67db9e8f0e2ae9c40bc1e2b64352a6b4, type: 3}
   m_Name: 
   m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.UI.Slider
+--- !u!224 &1685302061 stripped
+RectTransform:
+  m_CorrespondingSourceObject: {fileID: 5218315234343575205, guid: 642bd316bd7851b4596805f22e2ad8bd, type: 3}
+  m_PrefabInstance: {fileID: 7087637829574522350}
+  m_PrefabAsset: {fileID: 0}
 --- !u!114 &2070885142 stripped
 MonoBehaviour:
   m_CorrespondingSourceObject: {fileID: 3404374564710782046, guid: 642bd316bd7851b4596805f22e2ad8bd, type: 3}
@@ -488,10 +494,14 @@ PrefabInstance:
     - target: {fileID: 612735565295308920, guid: 642bd316bd7851b4596805f22e2ad8bd, type: 3}
       propertyPath: m_FillRect
       value: 
-      objectReference: {fileID: 0}
+      objectReference: {fileID: 1685302061}
     - target: {fileID: 612735565295308920, guid: 642bd316bd7851b4596805f22e2ad8bd, type: 3}
       propertyPath: m_Direction
       value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1610564830131182378, guid: 642bd316bd7851b4596805f22e2ad8bd, type: 3}
+      propertyPath: m_Value
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 2249809891274967151, guid: 642bd316bd7851b4596805f22e2ad8bd, type: 3}
       propertyPath: m_Value
@@ -655,11 +665,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 5218315234343575205, guid: 642bd316bd7851b4596805f22e2ad8bd, type: 3}
       propertyPath: m_AnchorMax.x
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 5218315234343575205, guid: 642bd316bd7851b4596805f22e2ad8bd, type: 3}
       propertyPath: m_AnchorMax.y
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 5218315234343575205, guid: 642bd316bd7851b4596805f22e2ad8bd, type: 3}
       propertyPath: m_AnchorMin.x

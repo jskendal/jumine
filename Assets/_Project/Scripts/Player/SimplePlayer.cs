@@ -1,19 +1,6 @@
 using UnityEngine;
 using UnityEngine.UI;
 
-
-public class PlayerEffect
-{
-    public GameObject player;
-    public BonusMalusType type;
-    
-    public PlayerEffect(GameObject player, BonusMalusType type)
-    {
-        this.player = player;
-        this.type = type;
-    }
-}
-
 public class Player : MonoBehaviour
 {
     public int playerID;
@@ -23,7 +10,9 @@ public class Player : MonoBehaviour
     // Bonus/Malus
     public float speedMultiplier = 1f;
     public bool isInvincible = false;
-    private bool isFrozen = false;
+    public bool hasArmor = false;
+    public int armorTurns = 0;
+    public bool isFrozen = false;
     private bool isPoisoned = false;
     private float poisonTimer = 0f;
     
@@ -82,42 +71,7 @@ public class Player : MonoBehaviour
         // Vérifie si le joueur a des effets actifs
         return isPoisoned || isFrozen || speedMultiplier != 1f || isInvincible;
     }
-    
-    public void ApplyEffect(BonusMalusType type, int value, float duration)
-    {
-        Debug.Log($"Player {playerID} got {type} (value:{value}, dur:{duration}s)");
-        
-        currentEffect = type;
-        effectTimer = duration;
-        
-        switch (type)
-        {
-            case BonusMalusType.HealthPotion:
-                Heal(value);
-                break;
-                
-            case BonusMalusType.SpeedBoost:
-                speedMultiplier = 1.5f;
-                break;
-                
-            case BonusMalusType.Invincibility:
-                isInvincible = true;
-                break;
-                
-            case BonusMalusType.Poison:
-                isPoisoned = true;
-                poisonTimer = duration;
-                break;
-                
-            case BonusMalusType.Shrink:
-                transform.localScale = Vector3.one * 0.5f;
-                break;
-                
-            case BonusMalusType.Freeze:
-                isFrozen = true;
-                break;
-        }
-    }
+   
 
     void ResetEffect(BonusMalusType type)
     {
@@ -163,6 +117,8 @@ public class Player : MonoBehaviour
     {
         health += amount;
         health = Mathf.Min(health, maxHealth);
+        // 🔥 Guérison du poison
+        poisonTurnsRemaining = 0;
         gameManager.UpdatePlayerHealthBar(playerID, health);
         Debug.Log($"Player {playerID} healed {amount}. Health: {health}");
     }

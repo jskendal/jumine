@@ -20,3 +20,5 @@ public struct CellEffect
     public float duration;  // Durée en secondes (pour Poison/Freeze)
     public bool isWeapon;   // True si c'est un Missile (touche les autres)
 }
+
+public enum ControlMode { Human, AI, Remote }

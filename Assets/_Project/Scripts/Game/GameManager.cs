@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using static GridManager;
 using UnityEngine.UI;
+using System.Linq;
 
 public class GameManager : MonoBehaviour
 {
@@ -44,6 +45,11 @@ public class GameManager : MonoBehaviour
     private bool hasDoneSpawnPlayers = false;
 
     private Vector2Int[] playerTargets = new Vector2Int[4];
+
+    [Header("Contrôle Joueurs")]
+    public int humanPlayerIndex = 1; 
+    public ControlMode[] playerControlModes = new ControlMode[4] { ControlMode.AI, ControlMode.Human, ControlMode.AI, ControlMode.AI };
+
     void Start()
     {
         StartCoroutine(StartGameAfterGridReady());
@@ -52,7 +58,16 @@ public class GameManager : MonoBehaviour
     }
     void Awake() {
         instance = this;
+        if (playerControlModes == null || playerControlModes.Length != 4)
+            playerControlModes = new ControlMode[4];
+
+        // Si tu veux FORCER une config par défaut à chaque lancement (pour debug)
+        playerControlModes[0] = ControlMode.AI;
+        playerControlModes[1] = ControlMode.Human;
+        playerControlModes[2] = ControlMode.AI;
+        playerControlModes[3] = ControlMode.AI;
     }
+
     void InitializeHealthUI()
     {
         if (playerHealthSliders == null || playerHealthSliders.Length < 4) 
@@ -223,8 +238,9 @@ public class GameManager : MonoBehaviour
                 playerTargets[i] = current; // Par défaut: rester sur place
             }
         }
-
-        StartCoroutine(ShowHighlightsAfterDelay(0.1f));
+        if (playerControlModes[humanPlayerIndex] == ControlMode.Human && players[humanPlayerIndex] != null) {
+            StartCoroutine(ShowHighlightsAfterDelay(0.1f));
+        }
     }
     
     public void SetPlayerTarget(int playerIndex, int row, int col)
@@ -243,9 +259,11 @@ public class GameManager : MonoBehaviour
     {
         ClearHighlights();
         
-        if (players[controlledPlayerIndex] != null && players[controlledPlayerIndex].activeSelf)
+        int idx = humanPlayerIndex; // le joueur contrôlé à la souris
+        
+        if (idx >= 0 && idx < players.Length && players[idx] != null && players[idx].activeSelf)
         {
-            ShowCellsAroundPlayer(players[controlledPlayerIndex]);
+            ShowCellsAroundPlayer(players[idx]);
         }
     }
     
@@ -308,6 +326,33 @@ public class GameManager : MonoBehaviour
     {
         isSelectionPhase = false;
         rowTimer = 0f;
+
+        // Pour chaque joueur : si c'est une IA, on lui choisit une cible
+        for (int i = 0; i < players.Length; i++)
+        {
+            if (players[i] == null || !players[i].activeSelf) continue;
+
+            if (playerControlModes[i] == ControlMode.AI)
+            {
+                playerTargets[i] = DetermineAITarget(i);
+                Debug.Log($"IA Player {i+1} a choisi la case ({playerTargets[i].x}, {playerTargets[i].y})");
+            }
+            // Si c'est un humain, playerTargets[i] est déjà initialisé à sa position actuelle
+        }
+        
+            // ⚠️ TODO : GESTION DES COLLISIONS
+        // Vérifier si plusieurs joueurs ont choisi la même case
+        // Exemple de code à implémenter plus tard :
+        /*
+        for(int i=0; i<4; i++) {
+        for(int j=i+1; j<4; j++) {
+            if(playerTargets[i] == playerTargets[j] && players[i].activeSelf && players[j].activeSelf) {
+            // Gérer la collision : repousser l'un des deux, ou infliger des dégâts aux deux
+            Debug.Log($"⚠️ Collision prévue entre Joueur {i+1} et {j+1} !");
+            }
+        }
+        }
+        */
         
         // IMMÉDIATEMENT : Insertion et jump
         InsertNewRow();
@@ -570,5 +615,103 @@ public class GameManager : MonoBehaviour
         Debug.Log($"🔍 GetPlayerCurrentCell: résultat = ({cell.x},{cell.y})");
         
         return cell;
+    }
+
+    // Dans GameManager.cs
+    Vector2Int DetermineAITarget(int playerIndex)
+    {
+        // 1. Sécurité : vérifier que le joueur est valide
+        if (playerIndex < 0 || playerIndex >= players.Length || players[playerIndex] == null)
+        {
+            Debug.LogWarning($"⚠️ AI pour joueur {playerIndex} invalide");
+            return new Vector2Int(-1, -1);
+        }
+
+        Player aiPlayer = players[playerIndex].GetComponent<Player>();
+        Vector2Int currentCell = GetPlayerCurrentCell(playerIndex);
+
+        // 2. Récupérer TOUTES les cases atteignables (même rayon 2 que l'humain)
+        List<Vector2Int> reachableCells = gridManager.GetCellsInRadius(currentCell, 2);
+
+        // 3. Si pas de case atteignable, rester sur place
+        if (reachableCells.Count == 0)
+        {
+            Debug.Log($"🤖 AI Joueur {playerIndex+1} ne peut bouger, reste sur place");
+            return currentCell;
+        }
+
+        // 4. 🎯 SCORER CHAQUE CASE (plus le score est élevé, mieux c'est)
+        Dictionary<Vector2Int, float> cellScores = new Dictionary<Vector2Int, float>();
+
+        foreach (Vector2Int cell in reachableCells)
+        {
+            float score = 0f;
+            CellEffect effect = gridManager.GetCellEffect(cell.x, cell.y);
+
+            // RÈGLES DE SCORING MODIFIABLES
+            switch (effect.type)
+            {
+                case EffectType.DamageBomb:
+                    score = -1000f; // 🚫 À ÉVITER ABSOLUMENT
+                    break;
+
+                case EffectType.Poison:
+                    score = -200f; // 🟣 On évite
+                    break;
+
+                case EffectType.HealthPotion:
+                    // 🟢 Si l'IA a peu de PV, la potion vaut beaucoup plus cher
+                    if (aiPlayer.health < 50)
+                        score = 800f; // Très prioritaire
+                    else if (aiPlayer.health < 80 && aiPlayer.health > 50)
+                        score = 150f;
+                    else
+                        score = 50f;
+                    break;
+
+                case EffectType.Neutral:
+                    // 🟡 Petit bonus si on bouge vers l'avant pour ne pas rester coincé
+                    if (cell.x > currentCell.x)
+                        score = 50f;
+                    else
+                        score = 10f;
+                    break;
+
+                case EffectType.Missile:
+                    score = 75f; // 🟡 On autorise l'IA à prendre le missile pour attaquer les autres
+                    break;
+            }
+
+            cellScores.Add(cell, score);
+        }
+
+        // 5. Choisir la meilleure case (avec un peu de hasard pour ne pas être trop prévisible)
+        Vector2Int bestCell = currentCell;
+        float bestScore = -9999f;
+
+        // 15% de chance de choisir une case aléatoire parmi les 3 meilleures pour éviter l'IA parfaite
+        bool useRandom = Random.value < 0.15f;
+
+        if (useRandom)
+        {
+            var topCells = cellScores.OrderByDescending(kvp => kvp.Value).Take(3).ToList();
+            bestCell = topCells[Random.Range(0, topCells.Count)].Key;
+            Debug.Log($"🤖 AI Joueur {playerIndex+1} choisit une case aléatoire pour varier !");
+        }
+        else
+        {
+            // Prendre la case avec le score le plus élevé
+            foreach (var kvp in cellScores)
+            {
+                if (kvp.Value > bestScore)
+                {
+                    bestScore = kvp.Value;
+                    bestCell = kvp.Key;
+                }
+            }
+        }
+        if (bestScore < 0) bestCell = currentCell;
+        Debug.Log($"🤖 AI Joueur {playerIndex+1} choisit ({bestCell.x},{bestCell.y}) | Score: {bestScore}");
+        return bestCell;
     }
 }

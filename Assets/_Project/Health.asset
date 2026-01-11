@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 6a5f93a296b7a0045808d4d1c4d106e5, type: 3}
   m_Name: Health
   m_EditorClassIdentifier: Assembly-CSharp::CellEffectData
-  effectType: 0
+  effectType: 1
   iconSprite: {fileID: 10901, guid: 0000000000000000f000000000000000, type: 0}
   backgroundColor: {r: 0, g: 0.3921569, b: 0, a: 1}
   futureRowAlpha: 0.51

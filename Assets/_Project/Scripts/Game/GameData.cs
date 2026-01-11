@@ -1,16 +1,16 @@
 // GameData.cs
 using UnityEngine;
 
-public enum EffectType
-{
-    Neutral,
-    HealthPotion,    // +Vie
-    DamageBomb,      // -Vie
-    Poison,          // -Vie sur la durée
-    Missile,         // Arme : Dégâts de zone
-    Freeze,          // Status : Ne bouge pas
-    SpeedBoost       // Status : Bouge plus vite
-}
+// public enum EffectType
+// {
+//     Neutral,
+//     HealthPotion,    // +Vie
+//     DamageBomb,      // -Vie
+//     Poison,          // -Vie sur la durée
+//     Missile,         // Arme : Dégâts de zone
+//     Freeze,          // Status : Ne bouge pas
+//     SpeedBoost       // Status : Bouge plus vite
+// }
 
 [System.Serializable]
 public struct CellEffect

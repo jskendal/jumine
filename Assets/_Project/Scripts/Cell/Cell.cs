@@ -1,20 +1,13 @@
 using UnityEngine;
 
 public class Cell : MonoBehaviour
-{
-    [Header("Type de case")]
-    public bool isBonus = false;
-    public bool isMalus = false;
-    
-        [Header("Données de la Case")]
+{ 
+    [Header("Données de la Case")]
     public CellEffect currentEffect; 
     
-    [Header("Matériaux")]
-    public Material normalMaterial;
-    public Material bonusMaterial;
-    public Material malusMaterial;
-    public Material weaponMaterial; 
     
+    public Renderer backgroundRenderer; // Le renderer de la case de fond
+    public SpriteRenderer iconRenderer;       // Le renderer de l'icône (le Quad)
     //public static Cell selectedCell = null;
 
     public int row, col;
@@ -29,8 +22,26 @@ public class Cell : MonoBehaviour
         gridManager = FindObjectOfType<GridManager>();
         // Assigner une couleur aléatoire pour tester
         //SetupRandomType();
+
+        if (backgroundRenderer == null) backgroundRenderer = GetComponent<Renderer>();
+        if (iconRenderer == null) iconRenderer = transform.Find("Icon")?.GetComponent<SpriteRenderer>();
+
+        if (iconRenderer == null) {
+            Debug.LogWarning("Aucun Renderer enfant nommé 'Icon' trouvé sur la cellule.");
+        }
     }
     
+        // 🔥 C'est ici que tu vas ajouter une nouvelle fonction temporaire SetIcon() 🔥
+    public void SetIcon(Sprite spriteToDisplay)
+    {
+        if (iconRenderer != null)
+        {
+            iconRenderer.sprite = spriteToDisplay;
+            iconRenderer.gameObject.SetActive(spriteToDisplay != null); // Cache l'icône si pas de sprite
+        } else {
+            Debug.LogWarning($"Cell ({name}): iconRenderer est NULL. L'icône ne peut pas être affichée.");
+        }
+    }
     
     public void SetVisual(Color color, float alpha = 1f)
     {
@@ -68,20 +79,8 @@ public class Cell : MonoBehaviour
         myRenderer.material = mat;
     }
 
-    Material CreateColorMaterial(Color color)
-    {
-        Material mat = new Material(Shader.Find("Standard"));
-        mat.color = color;
-        return mat;
-    }
-    
     void OnMouseDown()
     {
-        
-        // Pour tester : faire clignoter la case quand cliquée
-        // StartCoroutine(FlashCell());
-        
-        // Debug.Log($"Case {name} cliquée!");
         if (gridManager == null) return;
         
         // Vérifie DIRECTEMENT dans GridManager si cette cellule est sélectionnable
@@ -101,7 +100,7 @@ public class Cell : MonoBehaviour
 
             // Enregistrer la cible dans GameManager
             GameManager gm = FindObjectOfType<GameManager>();
-            gm.SetPlayerTarget(0, row, col); // Joueur 0 = humain
+            gm.SetPlayerTarget(gm.localPlayerID, row, col); // Joueur 0 = humain
 
             // Sélectionner visuellement la nouvelle cellule
             Select();
@@ -115,11 +114,7 @@ public class Cell : MonoBehaviour
     
     public void Select()
     {
-        // On nettoie les anciennes sélections visuelles avant
-        //GameObject[] oldBorders = GameObject.FindGameObjectsWithTag("SelectedBorder"); 
-        // Note: Il faudra ajouter le Tag "SelectedBorder" à tes préfabriqués de bordure ou gérer par nom
-        
-        // Ton code actuel pour changer la couleur en Jaune est bon
+
         GameObject border = GameObject.Find($"Border_Selectable_{row}_{col}");
         if (border != null)
         {

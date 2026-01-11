@@ -34,7 +34,7 @@ public class GameManager : MonoBehaviour
     private float selectionTimer = 0f;
     private bool isSelectionPhase = true;
     public GameObject[] players;
-    private int controlledPlayerIndex = 0;
+ 
     private List<GameObject> highlightedBorders = new List<GameObject>();
     public static GameManager instance;
 
@@ -47,15 +47,59 @@ public class GameManager : MonoBehaviour
     private Vector2Int[] playerTargets = new Vector2Int[4];
 
     [Header("Contrôle Joueurs")]
-    public int humanPlayerIndex = 1; 
+    public int localPlayerID = 1; 
     public ControlMode[] playerControlModes = new ControlMode[4] { ControlMode.AI, ControlMode.Human, ControlMode.AI, ControlMode.AI };
+    
+    private GameEngine engine; // Le moteur de jeu
+    private List<PlayerAction> currentTurnActions = new List<PlayerAction>();
+    private int[] playerCols = new int[] { 2, 7, 12, 17 }; 
 
     void Start()
     {
+        // Initialiser le moteur de jeu
+        engine = new GameEngine(gridManager.rows, gridManager.columns);
+
+        // Ajouter les 4 joueurs au moteur
+        for(int i=0; i<4; i++)
+        {
+            engine.AddPlayer(new PlayerState
+            {
+                ID = i,
+                Health = 100,
+                MaxHealth = 100,
+                Row = 0,
+                Col = playerCols[i],
+                IsAlive = true
+            });
+        }
+
         StartCoroutine(StartGameAfterGridReady());
 
         InitializeHealthUI();
     }
+    
+    void Update()
+    {
+            // FORCER la caméra à chaque frame pendant 0.5s
+        float timer = 0f;
+        timer += Time.deltaTime;
+        
+        if (timer < 0.5f && mainCamera != null)
+        {
+            mainCamera.transform.position = new Vector3(0f, cameraHeight, -cameraDistance);
+            mainCamera.transform.rotation = Quaternion.Euler(cameraAngle, 0f, 0f);
+        }
+        if (isSelectionPhase)
+        {
+            UpdateSelectionTimer();
+        }
+        else
+        {
+            UpdateRowTimer();
+        }
+    }
+    
+
     void Awake() {
         instance = this;
         if (playerControlModes == null || playerControlModes.Length != 4)
@@ -154,13 +198,24 @@ public class GameManager : MonoBehaviour
 
     IEnumerator StartGameAfterGridReady()
     {
-        while (gridManager == null || !gridManager.IsGridReady()) yield return null;
+        // 1. On attend que les références soient là
+        while (gridManager == null) yield return null;
 
-            yield return null;
+        // 2. On récupère l'état initial du moteur
+        GameState initialState = engine.GetCurrentState();
+
+        // 3. On demande à GridManager de créer la grille à partir de cet état
+        gridManager.GenerateGrid(initialState);
+        gridManager.CenterGrid();
+        gridManager.GenerateFutureRow(initialState.FutureRow);
+
+        yield return null;
 
         ForceCameraPosition();
-
         SpawnPlayers();
+        selectionTimer = selectionTime;
+        if (timerText != null) timerText.text = $"CHOISISSEZ ! {selectionTimer:F1}s";
+        if (timerSlider != null) { timerSlider.maxValue = 1f; timerSlider.value = 1f; }
         StartSelectionPhase();
     }
     
@@ -171,27 +226,7 @@ public class GameManager : MonoBehaviour
         mainCamera.transform.rotation = Quaternion.Euler(cameraAngle, 0f, 0f);
     }
     
-    void Update()
-    {
-            // FORCER la caméra à chaque frame pendant 0.5s
-        float timer = 0f;
-        timer += Time.deltaTime;
-        
-        if (timer < 0.5f && mainCamera != null)
-        {
-            mainCamera.transform.position = new Vector3(0f, cameraHeight, -cameraDistance);
-            mainCamera.transform.rotation = Quaternion.Euler(cameraAngle, 0f, 0f);
-        }
-        if (isSelectionPhase)
-        {
-            UpdateSelectionTimer();
-        }
-        else
-        {
-            UpdateRowTimer();
-        }
-    }
-    
+
     void SpawnPlayers()
     {
         players = new GameObject[4];
@@ -238,15 +273,25 @@ public class GameManager : MonoBehaviour
                 playerTargets[i] = current; // Par défaut: rester sur place
             }
         }
-        if (playerControlModes[humanPlayerIndex] == ControlMode.Human && players[humanPlayerIndex] != null) {
+        if (playerControlModes[localPlayerID] == ControlMode.Human && players[localPlayerID] != null) {
             StartCoroutine(ShowHighlightsAfterDelay(0.1f));
         }
     }
     
     public void SetPlayerTarget(int playerIndex, int row, int col)
     {
+        // On met à jour l'affichage visuel (ton tableau playerTargets existant)
         playerTargets[playerIndex] = new Vector2Int(row, col);
-        Debug.Log($"Joueur {playerIndex + 1} a choisi la case ({row}, {col})");
+
+        // On prépare l'action pour le moteur (on remplace si déjà existante pour ce joueur)
+        currentTurnActions.RemoveAll(a => a.PlayerID == playerIndex);
+        currentTurnActions.Add(new PlayerAction { 
+            PlayerID = playerIndex, 
+            TargetRow = row, 
+            TargetCol = col 
+        });
+
+        Debug.Log($"Cible enregistrée pour Moteur : Joueur {playerIndex + 1} -> ({row},{col})");
     }
 
     IEnumerator ShowHighlightsAfterDelay(float delay)
@@ -259,7 +304,7 @@ public class GameManager : MonoBehaviour
     {
         ClearHighlights();
         
-        int idx = humanPlayerIndex; // le joueur contrôlé à la souris
+        int idx = localPlayerID; // le joueur contrôlé à la souris
         
         if (idx >= 0 && idx < players.Length && players[idx] != null && players[idx].activeSelf)
         {
@@ -299,14 +344,22 @@ public class GameManager : MonoBehaviour
     
     void UpdateSelectionTimer()
     {
-        selectionTimer -= Time.deltaTime;
+        selectionTimer = Mathf.Max(0f, selectionTimer - Time.deltaTime);
+
         if (timerText != null)
             timerText.text = $"CHOISISSEZ ! {Mathf.Max(0, selectionTimer):F1}s";
         
         if (timerSlider != null)
                 timerSlider.value = selectionTimer / selectionTime;
 
-        if (selectionTimer <= 0) EndSelectionPhase();
+        //if (selectionTimer <= 0) EndSelectionPhase();
+         if (selectionTimer <= 0f)
+        {
+            // Sécurité supplémentaire: vérifier que la grille est prête
+            if (!gridManager.IsGridReady()) return;
+
+            EndSelectionPhase();
+        }
     }
     
     void UpdateRowTimer()
@@ -327,249 +380,119 @@ public class GameManager : MonoBehaviour
         isSelectionPhase = false;
         rowTimer = 0f;
 
-        // Pour chaque joueur : si c'est une IA, on lui choisit une cible
+        // 1. IA : Demander aux IA de remplir leurs PlayerActions
         for (int i = 0; i < players.Length; i++)
         {
-            if (players[i] == null || !players[i].activeSelf) continue;
-
-            if (playerControlModes[i] == ControlMode.AI)
+            if (playerControlModes[i] == ControlMode.AI && players[i].activeSelf)
             {
-                playerTargets[i] = DetermineAITarget(i);
-                Debug.Log($"IA Player {i+1} a choisi la case ({playerTargets[i].x}, {playerTargets[i].y})");
-            }
-            // Si c'est un humain, playerTargets[i] est déjà initialisé à sa position actuelle
-        }
-        
-            // ⚠️ TODO : GESTION DES COLLISIONS
-        // Vérifier si plusieurs joueurs ont choisi la même case
-        // Exemple de code à implémenter plus tard :
-        /*
-        for(int i=0; i<4; i++) {
-        for(int j=i+1; j<4; j++) {
-            if(playerTargets[i] == playerTargets[j] && players[i].activeSelf && players[j].activeSelf) {
-            // Gérer la collision : repousser l'un des deux, ou infliger des dégâts aux deux
-            Debug.Log($"⚠️ Collision prévue entre Joueur {i+1} et {j+1} !");
+                // On utilise ta logique IA actuelle pour obtenir une cible
+                Vector2Int aiTarget = DetermineAITarget(i);
+                SetPlayerTarget(i, aiTarget.x, aiTarget.y);
             }
         }
-        }
-        */
+
+         // 2. EXÉCUTER LA LOGIQUE DANS LE MOTEUR
+        // C'est ici que le "cerveau" travaille
+        engine.ProcessTurn(currentTurnActions);
+        currentTurnActions.Clear(); // On vide pour le prochain tour
         
+
+        // 3. RÉCUPÉRER LE RÉSULTAT
+        GameState state = engine.GetCurrentState();
+
+        // 4. DEMANDER À UNITY D'ANIMER LE RÉSULTAT
+        // On utilise les données du moteur pour dire à Unity quoi faire
+        StartCoroutine(SyncUnityWithEngine(state));
+
         // IMMÉDIATEMENT : Insertion et jump
-        InsertNewRow();
+        //InsertNewRow();
         
         // NE PAS appeler StartSelectionPhase() ici
         // Ce sera appelé après le jump (dans InsertNewRow())
     }
     
-    void InsertNewRow()
+    IEnumerator SyncUnityWithEngine(GameState state)
     {
-        Debug.Log("=== INSERTION + JUMP ===");
-        
-        // 1. Nettoyer les highlights
+            // 1. Désactiver les choix visuels (cyan/jaune)
         ClearHighlights();
-        
-        // 2. Insérer la ligne
-        // 2.1. SAUVEGARDER les coordonnées AVANT insertion
-        int savedRow = -1;
-        int savedCol = -1;
-        
-        // if (Cell.selectedCell != null)
-        // {
-        //     savedRow = Cell.selectedCell.row;
-        //     savedRow = playerTargets[0].x;
-        //     savedCol = Cell.selectedCell.col;
-        //     Debug.Log($"Cellule sélectionnée: ({savedRow},{savedCol}) - SAUVEGARDÉ");
-        // }
-        // else
-        // {
-        //     Vector2Int currentCell = GetPlayerCurrentCell(controlledPlayerIndex);
-        //     savedRow = currentCell.x;
-        //     savedCol = currentCell.y;
-        //     // Debug.Log($"Aucune sélection, joueur reste sur: ({savedRow},{savedCol})");
-        // }
-        gridManager.InsertRow();
 
-        // 3. Faire sauter les joueurs
-        StartCoroutine(MoveAllPlayers(savedRow, savedCol));
-        
-        if(hasDoneSpawnPlayers)  
-            StartCoroutine(ResolveTurnEffects());
-    }
+        // 1. Récupérer la ligne du haut depuis le moteur
+            CellData[] topRowData = new CellData[state.Cols];
+            for(int c=0; c < state.Cols; c++) {
+                topRowData[c] = state.Grid[state.Rows - 1, c];
+            }
 
-    IEnumerator ResolveTurnEffects()
-    {
-        // 1. Attendre la fin de l'anim de saut
-        yield return new WaitForSeconds(jumpDuration + 0.2f);
-
-        // 2. Liste des vivants
-        List<int> activePlayers = new List<int>();
-        for (int i = 0; i < players.Length; i++)
-        {
-            if (players[i] != null && players[i].activeSelf) activePlayers.Add(i);
-        }
-
-        // 3. Mélanger l'ordre (Random)
-        activePlayers = ShuffleList(activePlayers);
-
-        Debug.Log("--- RÉSOLUTION DES EFFETS ---");
-
-        foreach (int playerIndex in activePlayers)
-        {
-            // Où est ce joueur MAINTENANT ?
-            Vector3 playerPos = players[playerIndex].transform.position;
-            Vector2Int currentCell = gridManager.GetCellFromWorldPosition(playerPos);
-
-            // Quel est l'effet sous ses pieds ?
-            // (Note: gridManager.GetCellEffect doit exister, voir plus bas*)
-            CellEffect effect = gridManager.GetCellEffect(currentCell.x, currentCell.y);
-
-            if (effect.type != EffectType.Neutral)
+            CellData[] newFutureRowData = state.FutureRow;
+            if (newFutureRowData == null || newFutureRowData.Length != state.Cols)
             {
-                Debug.Log($"Joueur {playerIndex + 1} active : {effect.type}");
-                yield return StartCoroutine(ApplyEffectToPlayerCoroutine(playerIndex, effect, currentCell));
-                yield return new WaitForSeconds(0.5f); // Pause dramatique
+                Debug.LogWarning("Le moteur n'a pas fourni de FutureRow valide. Utilisation d'un tableau vide.");
+                newFutureRowData = new CellData[state.Cols]; // Tableau vide par défaut
+            }
+            // 2. Passer cette ligne à Unity
+            gridManager.InsertRow(topRowData, newFutureRowData);
+
+
+        // B. Faire sauter les joueurs vers leurs nouvelles positions calculées par le moteur
+        foreach (var pState in state.Players)
+        {
+            // 1. Vérifier que l'ID est valide
+            if (pState.ID < 0 || pState.ID >= players.Length)
+            {
+                Debug.LogError($"ID Joueur invalide : {pState.ID}");
+                continue; // Passe au joueur suivant
+            }
+
+            // 2. Récupérer l'objet visuel correspondant
+            GameObject playerObj = players[pState.ID];
+
+            // 3. Vérifier que l'objet existe (il a pu être détruit si le joueur est mort)
+            if (playerObj != null && playerObj.activeSelf)
+            {
+                // Le joueur est vivant ET son objet existe -> On le bouge
+                Vector3 targetPos = gridManager.GetCellWorldPosition(pState.Row, pState.Col);
+                StartCoroutine(JumpToPosition(playerObj, targetPos));
+            }
+            else if (pState.IsAlive)
+            {
+                // Cas rare : Le moteur dit qu'il est vivant, mais l'objet n'existe pas.
+                Debug.LogWarning($"Le Joueur {pState.ID} est marqué vivant dans le moteur mais son GameObject est manquant !");
             }
         }
 
-        // 2. Résolution des effets PERSISTANTS (poison, etc.) – une fois par tour
-        for (int i = 0; i < players.Length; i++)
+        yield return new WaitForSeconds(jumpDuration + 0.1f);
+
+        // C. Mettre à jour les barres de vie et les effets visuels
+        foreach (var pState in state.Players)
         {
-            if (players[i] == null || !players[i].activeSelf) continue;
-            Player p = players[i].GetComponent<Player>();
-            if (p != null)
+            UpdatePlayerHealthBar(pState.ID, pState.Health);
+            
+            if (!pState.IsAlive && players[pState.ID].activeSelf)
             {
-                p.ProcessTurnEndEffects();
+                players[pState.ID].SetActive(false);
             }
         }
 
-        // 4. Fin du tour
-        CheckGameOver(); // (Ta méthode ou une simple vérification)
+            // 5. Vérifier la fin de partie
+        int survivors = state.Players.Count(p => p.IsAlive);
+        if (survivors <= 1)
+        {
+            var winner = state.Players.FirstOrDefault(p => p.IsAlive);
+            timerText.text = $"FIN ! Vainqueur: Joueur {winner.ID + 1}";
+            yield break; // On arrête la boucle du jeu
+        }
+
+        // D. Relancer le tour suivant
         StartSelectionPhase();
     }
-
-    List<int> ShuffleList(List<int> list)
-    {
-        for (int i = 0; i < list.Count; i++) {
-            int temp = list[i];
-            int randomIndex = Random.Range(i, list.Count);
-            list[i] = list[randomIndex];
-            list[randomIndex] = temp;
-        }
-        return list;
-    }
-
-    IEnumerator ApplyEffectToPlayerCoroutine(int playerIndex, CellEffect effect, Vector2Int cellCoord)
-    {
-         Player p = players[playerIndex].GetComponent<Player>();
-        if (p == null) yield break;
-
-        switch (effect.type)
-        {
-            case EffectType.HealthPotion:
-                p.Heal(effect.value);
-                // Afficher icône coeur
-                break;
-
-            case EffectType.DamageBomb:
-                p.TakeDamage(effect.value);
-                // Afficher icône explosion
-                break;
-
-            case EffectType.Poison:
-                // Ici : pas de dégâts immédiats, on programme 3 tours de poison
-                p.ApplyPoison((int)effect.duration, effect.value);
-                break;
-
-            case EffectType.Missile:
-                // CAS SPÉCIAL : Le joueur qui marche sur le missile subit les dégâts ET déclenche l'arme
-                //Non pas de //p.TakeDamage(effect.value); // Il se blesse en marchant dessus (ou pas, selon règles)
-                //peut-etre plus tard un autre type de missile qui blesse aussi le déclencheur
-                
-                // On déclenche l'effet d'arme sur la grille
-                ApplyWeaponEffect(effect, cellCoord, playerIndex);
-                break;
-        }
-        
-        yield return null;
-    }
-
-    void ApplyWeaponEffect(CellEffect effect, Vector2Int originCell, int triggeringPlayerIndex)
-    {
-        if (effect.type != EffectType.Missile) return;
-
-        Debug.Log($"🚀 MISSILE déclenché en ligne {originCell.x} !");
-
-        // On parcourt tous les joueurs pour voir s'ils sont sur la ligne de tir
-        for (int i = 0; i < players.Length; i++)
-        {
-            if (i == triggeringPlayerIndex) continue;
-            if (players[i] == null || !players[i].activeSelf) continue;
-
-            // On récupère la position actuelle du joueur i
-            Vector2Int playerPos = gridManager.GetCellFromWorldPosition(players[i].transform.position);
-
-            // Règle du Missile : Touche tout le monde sur la même LIGNE (Row)
-            if (playerPos.x == originCell.x)
-            {
-                Player pScript = players[i].GetComponent<Player>();
-                if (pScript != null)
-                {
-                    pScript.TakeDamage(effect.value);
-                    Debug.Log($"💥 Joueur {i + 1} touché par le missile !");
-                    // TODO: Ajouter particules explosion ici
-                }
-            }
-        }
-    }
-    void CheckGameOver()
-    {
-        int aliveCount = 0;
-        int lastSurvivor = -1;
-        
-        foreach(var p in players)
-        {
-            if(p != null && p.activeSelf)
-            {
-                aliveCount++;
-                lastSurvivor = System.Array.IndexOf(players, p);
-            }
-        }
-
-        if(aliveCount <= 1)
-        {
-            Debug.Log($"🏆 GAME OVER ! Vainqueur : Joueur {lastSurvivor + 1}");
-            isSelectionPhase = false; // Arrêter le jeu
-            // Afficher UI Victoire
-        }
-    }
-
-    
-    IEnumerator MoveAllPlayers(int savedRow = -1, int savedCol = -1)
-    {
-        for (int i = 0; i < players.Length; i++)
-        {
-            if (players[i] != null && players[i].activeSelf)
-            {
-                // On récupère la cible enregistrée pour ce joueur
-                Vector2Int target = playerTargets[i];
-                Vector3 worldPos = gridManager.GetCellWorldPosition(target.x, target.y);
-                
-                StartCoroutine(JumpToPosition(players[i], worldPos));
-            }
-        }
-        
-        yield return new WaitForSeconds(jumpDuration);
-        StartCoroutine(ResolveTurnEffects());
-    }
-    
+ 
     IEnumerator JumpToPosition(GameObject player, Vector3 targetPosition)
     {
         Vector3 startPosition = player.transform.position;
         float timer = 0f;
         
             // Garder la même hauteur Y que le départ
-    float baseY = startPosition.y;
-    targetPosition.y = baseY; // S'assurer que la position cible a la même hauteur
+        float baseY = startPosition.y;
+        targetPosition.y = baseY; // S'assurer que la position cible a la même hauteur
 
         while (timer < jumpDuration)
         {
@@ -646,7 +569,10 @@ public class GameManager : MonoBehaviour
         foreach (Vector2Int cell in reachableCells)
         {
             float score = 0f;
-            CellEffect effect = gridManager.GetCellEffect(cell.x, cell.y);
+            int futureRow = cell.x + 1;
+            CellEffect effect;
+       
+            effect = gridManager.GetCellEffect(futureRow, cell.y);
 
             // RÈGLES DE SCORING MODIFIABLES
             switch (effect.type)

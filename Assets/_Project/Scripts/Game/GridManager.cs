@@ -1,5 +1,6 @@
 using UnityEngine;
 using System.Collections.Generic;
+using System.Linq;
 
 public class GridManager : MonoBehaviour
 {
@@ -25,19 +26,21 @@ public class GridManager : MonoBehaviour
             if(child.name.StartsWith("Cell_") || child.name.StartsWith("FutureCell_"))
                 Destroy(child.gameObject);
         }
-        GenerateGrid();
+ 
         CenterGrid();
         isGridReady = true;
-        GenerateFutureRow();
     }
+    
     
     public bool IsGridReady()
     {
         return isGridReady;
     }
 
-    void GenerateGrid()
+    public void GenerateGrid(GameState state)
     {
+        rows = state.Rows;
+        columns = state.Cols;
         gridCells = new GameObject[rows, columns];
         
         for (int r = 0; r < rows; r++)
@@ -52,87 +55,47 @@ public class GridManager : MonoBehaviour
                 cell.name = $"Cell_{r}_{c}";
                 gridCells[r, c] = cell;
                 
-                AssignRandomEffectToCell(cellScript, r, c);
+                ApplyEffectToCell(cellScript, state.Grid[r, c]);
             }
         }
     }
     
-    void AssignRandomEffectToCell(Cell cellScript, int r, int c)
+    public CellEffectData[] effectVisuals;
+
+    // 1. On crée une fonction qui traduit la donnée "Moteur" en visuel "Unity"
+    public void ApplyEffectToCell(Cell cellScript, CellData data)
     {
-                // Ligne de spawn → TOUJOURS neutre
-        if (r == 0 || (r == 1 && !hasDoneFirstTurn))
+        if (cellScript == null) return;
+
+        // 1. Met à jour la logique interne de la cellule
+        cellScript.currentEffect = new CellEffect {
+            type = data.Type,
+            value = data.Value,
+            isWeapon = data.IsWeapon
+        };
+
+        // 2. Trouve la configuration visuelle correspondante à cet effet
+        CellEffectData visualConfig = effectVisuals.FirstOrDefault(x => x.effectType == data.Type);
+        if (visualConfig == null)
         {
-            cellScript.currentEffect = new CellEffect 
-            { 
-                type = EffectType.Neutral, 
-                value = 0, 
-                duration = 0, 
-                isWeapon = false 
-            };
-            cellScript.SetVisual(Color.white, 1f);
-            return;
+            Debug.LogWarning($"Visual data for effect {data.Type} not found. Using Neutral fallback.");
+            visualConfig = effectVisuals.FirstOrDefault(x => x.effectType == EffectType.Neutral);
+            if (visualConfig == null)
+            {
+                Debug.LogError("FATAL ERROR: Neutral visual data not found.");
+                return;
+            }
         }
 
-        float chance = Random.Range(0f, 1f);
+        // 3. Applique la couleur ET l'alpha DEPUIS LE SCRIPTABLEOBJECT
+        float alpha = (cellScript.row == -1) ? visualConfig.futureRowAlpha : 1.0f;
+        cellScript.SetVisual(visualConfig.backgroundColor, alpha);
 
-        if (chance < 0.05f) // Missile
-        {
-            cellScript.currentEffect = new CellEffect 
-            { 
-                type = EffectType.Missile, 
-                value = 30, 
-                duration = 0, 
-                isWeapon = true 
-            };
-            cellScript.SetVisual(Color.yellow, 0.8f);
-        }
-        else if (chance < 0.15f) // Poison
-        {
-            cellScript.currentEffect = new CellEffect 
-            { 
-                type = EffectType.Poison, 
-                value = 10,   // dégâts par tour
-                duration = 3, // 3 tours
-                isWeapon = false 
-            };
-            cellScript.SetVisual(Color.magenta, 0.8f);
-        }
-        else if (chance < 0.25f) // Bombe
-        {
-            cellScript.currentEffect = new CellEffect 
-            { 
-                type = EffectType.DamageBomb, 
-                value = 30, 
-                duration = 0, 
-                isWeapon = false 
-            };
-            cellScript.SetVisual(Color.red, 1f);
-        }
-        else if (chance < 0.35f) // Potion
-        {
-            cellScript.currentEffect = new CellEffect 
-            { 
-                type = EffectType.HealthPotion, 
-                value = 30, 
-                duration = 0, 
-                isWeapon = false 
-            };
-            cellScript.SetVisual(Color.green, 1f);
-        }
-        else
-        {
-            cellScript.currentEffect = new CellEffect 
-            { 
-                type = EffectType.Neutral, 
-                value = 0, 
-                duration = 0, 
-                isWeapon = false 
-            };
-            cellScript.SetVisual(Color.white, 1f);
-        }
+        // 4. Applique l'icône DEPUIS LE SCRIPTABLEOBJECT
+        cellScript.SetIcon(visualConfig.iconSprite);
     }
 
-    void GenerateFutureRow()
+    public void GenerateFutureRow(CellData[] futureData)
     {
         futureRow = new GameObject[columns];
         
@@ -149,14 +112,22 @@ public class GridManager : MonoBehaviour
                 rows * cellSize + 0.5f
             );
 
-            AssignRandomEffectToCell(cellScript, -1, c); 
+            ApplyEffectToCell(cellScript, futureData[c]);
             Color baseColor = cellScript.GetComponent<Renderer>().material.color;
             cellScript.SetVisual(baseColor, 0.5f); // <-- C'est ici qu'on la rend transparente      
             
             futureRow[c] = cell;
         }
     }
-    
+
+    // Permet de récupérer le script Cell d'une coordonnée précise
+    public Cell GetCellScript(int r, int c)
+    {
+        if (gridCells != null && gridCells[r, c] != null)
+            return gridCells[r, c].GetComponent<Cell>();
+        return null;
+    }
+
     public void CenterGrid()
     {
         float totalWidth = (columns - 1) * cellSize;
@@ -164,7 +135,7 @@ public class GridManager : MonoBehaviour
         transform.position = new Vector3(-totalWidth / 2f, 0f, -totalHeight / 2f);
     }
     
-    public void InsertRow()
+    public void InsertRow(CellData[] newRowData, CellData[] newFutureRowData)
     {
         // 1. Détruire la ligne du bas
         for (int c = 0; c < columns; c++)
@@ -210,7 +181,7 @@ public class GridManager : MonoBehaviour
             cellScript.row = topRow;  // ← row = 5
             cellScript.col = c;       // col = c
 
-            AssignRandomEffectToCell(cellScript, topRow, c);
+            ApplyEffectToCell(cellScript, newRowData[c]);
 
             // Rendre opaque
             Color baseColor = cellScript.GetComponent<Renderer>().material.color;
@@ -218,7 +189,7 @@ public class GridManager : MonoBehaviour
         }
         
         // 4. Générer une nouvelle future ligne
-        GenerateFutureRow();
+        GenerateFutureRow(newFutureRowData);
         hasDoneFirstTurn = true;
     }
     
@@ -320,27 +291,6 @@ public class GridManager : MonoBehaviour
         HealthPotion,   // Vert (+ vie)
         DamageBomb      // Rouge (- vie)
         // On ajoutera plus tard : Missile, Nuclear, SpeedBoost, etc.
-    }
-
-    public CellType GetCellType(int row, int col)
-    {
-        if (row < 0 || row >= rows || col < 0 || col >= columns) 
-            return CellType.Neutral;
-        
-        if (gridCells[row, col] == null) 
-            return CellType.Neutral;
-        
-        Cell cellScript = gridCells[row, col].GetComponent<Cell>();
-        if (cellScript == null) 
-            return CellType.Neutral;
-        
-        // UTILISE TES BOOLS EXISTANTS
-        if (cellScript.isBonus)
-            return CellType.HealthPotion; // Vert = bonus santé
-        else if (cellScript.isMalus)
-            return CellType.DamageBomb;   // Rouge = dégâts
-        else
-            return CellType.Neutral;
     }
 
     public CellEffect GetCellEffect(int row, int col)

@@ -32,12 +32,14 @@ public class Cell : MonoBehaviour
     }
     
         // 🔥 C'est ici que tu vas ajouter une nouvelle fonction temporaire SetIcon() 🔥
-    public void SetIcon(Sprite spriteToDisplay)
+    public void SetIcon(CellEffectData ced)
     {
         if (iconRenderer != null)
         {
-            iconRenderer.sprite = spriteToDisplay;
-            iconRenderer.gameObject.SetActive(spriteToDisplay != null); // Cache l'icône si pas de sprite
+            iconRenderer.sprite = ced.iconSprite;
+            iconRenderer.transform.localScale = new Vector3(0.2f, 0.2f, 0.2f);
+            iconRenderer.color = ced.iconTint;
+            iconRenderer.gameObject.SetActive(ced.iconSprite != null); // Cache l'icône si pas de sprite
         } else {
             Debug.LogWarning($"Cell ({name}): iconRenderer est NULL. L'icône ne peut pas être affichée.");
         }

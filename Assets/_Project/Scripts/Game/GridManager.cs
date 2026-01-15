@@ -63,22 +63,22 @@ public class GridManager : MonoBehaviour
     public CellEffectData[] effectVisuals;
 
     // 1. On crée une fonction qui traduit la donnée "Moteur" en visuel "Unity"
-    public void ApplyEffectToCell(Cell cellScript, CellData data)
+    public void ApplyEffectToCell(Cell cellScript, CellEffect data)
     {
         if (cellScript == null) return;
 
         // 1. Met à jour la logique interne de la cellule
         cellScript.currentEffect = new CellEffect {
-            type = data.Type,
-            value = data.Value,
-            isWeapon = data.IsWeapon
+            type = data.type,
+            value = data.value,
+            isWeapon = data.isWeapon
         };
 
         // 2. Trouve la configuration visuelle correspondante à cet effet
-        CellEffectData visualConfig = effectVisuals.FirstOrDefault(x => x.effectType == data.Type);
+        CellEffectData visualConfig = effectVisuals.FirstOrDefault(x => x.effectType == data.type);
         if (visualConfig == null)
         {
-            Debug.LogWarning($"Visual data for effect {data.Type} not found. Using Neutral fallback.");
+            Debug.LogWarning($"Visual data for effect {data.type} not found. Using Neutral fallback.");
             visualConfig = effectVisuals.FirstOrDefault(x => x.effectType == EffectType.Neutral);
             if (visualConfig == null)
             {
@@ -92,10 +92,10 @@ public class GridManager : MonoBehaviour
         cellScript.SetVisual(visualConfig.backgroundColor, alpha);
 
         // 4. Applique l'icône DEPUIS LE SCRIPTABLEOBJECT
-        cellScript.SetIcon(visualConfig.iconSprite);
+        cellScript.SetIcon(visualConfig);
     }
 
-    public void GenerateFutureRow(CellData[] futureData)
+    public void GenerateFutureRow(CellEffect[] futureData)
     {
         futureRow = new GameObject[columns];
         
@@ -135,7 +135,7 @@ public class GridManager : MonoBehaviour
         transform.position = new Vector3(-totalWidth / 2f, 0f, -totalHeight / 2f);
     }
     
-    public void InsertRow(CellData[] newRowData, CellData[] newFutureRowData)
+    public void InsertRow(CellEffect[] newRowData, CellEffect[] newFutureRowData)
     {
         // 1. Détruire la ligne du bas
         for (int c = 0; c < columns; c++)
@@ -285,13 +285,13 @@ public class GridManager : MonoBehaviour
     }
 
 
-    public enum CellType
-    {
-        Neutral,
-        HealthPotion,   // Vert (+ vie)
-        DamageBomb      // Rouge (- vie)
-        // On ajoutera plus tard : Missile, Nuclear, SpeedBoost, etc.
-    }
+    // public enum CellType
+    // {
+    //     Neutral,
+    //     HealthPotion,   // Vert (+ vie)
+    //     DamageBomb      // Rouge (- vie)
+    //     // On ajoutera plus tard : Missile, Nuclear, SpeedBoost, etc.
+    // }
 
     public CellEffect GetCellEffect(int row, int col)
     {

@@ -76,6 +76,8 @@ public class GameManager : MonoBehaviour
         StartCoroutine(StartGameAfterGridReady());
 
         InitializeHealthUI();
+
+        engine.EffectApplied += (playerId, effectType, value, executionRank) => StartCoroutine(OnEffectApplied(playerId, effectType, value, executionRank));
     }
     
     void Update()
@@ -110,6 +112,131 @@ public class GameManager : MonoBehaviour
         playerControlModes[1] = ControlMode.Human;
         playerControlModes[2] = ControlMode.AI;
         playerControlModes[3] = ControlMode.AI;
+    }
+
+    IEnumerator OnEffectApplied(int playerId, EffectType effectType, int value, int rank)
+    {
+         // 🔥 Le secret : chaque animation attend son tour
+        yield return new WaitForSeconds(rank * 1.5f); 
+        // Tu récupères le joueur et tu joues l'animation
+        GameObject playerObj = players[playerId];
+        switch(effectType)
+        {
+            case EffectType.HealthPotion:
+                Debug.Log($"Anim Heal Joueur {playerId+1}");
+            // Spawn 5 petites sphères vertes aléatoirement autour du joueur
+                for (int i = 0; i < 5; i++)
+                {
+                    GameObject healParticle = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                    healParticle.transform.position = playerObj.transform.position + Random.insideUnitSphere * 0.5f;
+                    healParticle.transform.localScale = new Vector3(0.2f, 0.2f, 0.2f);
+                    healParticle.GetComponent<Renderer>().material.color = Color.green;
+
+                    // Faire monter la particule puis la détruire
+                    StartCoroutine(MoveUpAndDestroy(healParticle));
+                }
+                yield return new WaitForSeconds(0.5f);
+                break;
+
+            case EffectType.DamageBomb:
+                Debug.Log($"[Anim] Bomb Joueur {playerId+1}");
+                // Anim : secousse + flash rouge
+                Vector3 originalPos = playerObj.transform.position;
+                for (int i = 0; i < 3; i++)
+                {
+                    playerObj.transform.position += Random.insideUnitSphere * 0.1f;
+                    yield return new WaitForEndOfFrame();
+                }
+                playerObj.transform.position = originalPos;
+                break;
+
+            case EffectType.Missile:
+                 int targetRow = value;
+
+                // 1. Créer le missile ET L'ORIENTER HORIZONTALEMENT
+                GameObject missile = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+                missile.transform.position = playerObj.transform.position + Vector3.up * 0.5f;
+                missile.transform.localScale = new Vector3(0.8f, 0.2f, 0.2f); // Plus long et plus fin
+                missile.transform.rotation = Quaternion.Euler(0f, 0f, 90f); // Rotation de 90° pour qu'il soit horizontal
+                missile.GetComponent<Renderer>().material.color = new Color(1f, 0.8f, 0f); // Jaune/orange pour le contraste
+
+                // 2. Le reste du code de déplacement reste identique
+                float speed = 12f;
+                float endX = gridManager.GetCellWorldPosition(targetRow, gridManager.columns - 1).x;
+                float startX = gridManager.GetCellWorldPosition(targetRow, 0).x;
+
+                while (Vector3.Distance(missile.transform.position, new Vector3(endX, missile.transform.position.y, missile.transform.position.z)) > 0.1f)
+                {
+                    missile.transform.Translate(Vector3.right * speed * Time.deltaTime);
+                    yield return null;
+                }
+
+                Destroy(missile);
+                break;
+
+            case EffectType.Freeze:
+                Debug.Log($"[Anim] Freeze Joueur {playerId+1}");
+                Renderer playerRend = playerObj.GetComponent<Renderer>();
+                Color originalColor = playerRend.material.color;
+
+                // 1. Créer le cube de glace AU DESSUS du joueur, pas dedans
+                GameObject iceCube = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                iceCube.name = "IceCube"; // Pour le retrouver plus tard dans OnEffectRemoved
+                iceCube.transform.parent = playerObj.transform; // Le rattacher au joueur pour qu'il suive
+                iceCube.transform.localPosition = Vector3.zero; // Position relative au joueur
+                iceCube.transform.localScale = playerObj.transform.localScale * 1.2f; // 20% plus grand pour être visible autour
+                iceCube.transform.localRotation = Quaternion.identity;
+
+                // 2. Configurer le matériau de glace correctement
+                Material iceMat = new Material(Shader.Find("Standard"));
+                iceMat.color = new Color(0.3f, 0.7f, 1f, 0.4f); // Bleu glace plus visible
+                iceMat.SetFloat("_Mode", 3);
+                iceMat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+                iceMat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                iceMat.SetInt("_ZWrite", 0); // Désactiver l'écriture en profondeur pour que le joueur soit visible à travers la glace
+                iceCube.GetComponent<Renderer>().material = iceMat;
+
+                // 3. Tinter le joueur en bleu glace
+                playerRend.material.color = new Color(0.7f, 0.9f, 1f);
+                break;
+
+            case EffectType.Poison:
+                for (int i = 0; i < 5; i++)
+                {
+                    GameObject poisonParticle = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                    poisonParticle.transform.position = playerObj.transform.position + Random.insideUnitSphere * 0.5f;
+                    poisonParticle.transform.localScale = new Vector3(0.2f, 0.2f, 0.2f);
+                    poisonParticle.GetComponent<Renderer>().material.color = new Color(0.8f, 0.2f, 0.8f); // Violet foncé
+
+                    // Plus lent que le soin pour donner une impression de lenteur toxique
+                    StartCoroutine(MoveUpAndDestroy(poisonParticle, true));
+                }
+                yield return new WaitForSeconds(0.5f);
+                break;
+
+            case EffectType.Armor:
+                Debug.Log($"[Anim] Armor Joueur {playerId+1}");
+                // Anim : bouclier lumineux
+                break;
+        }
+    }
+
+    IEnumerator OnEffectRemoved(int playerId, EffectType effectType, int value, int rank)
+    {
+        yield return new WaitForSeconds(rank * 1.5f);
+        GameObject playerObj = players[playerId];
+        switch(effectType)
+        {
+            case EffectType.Freeze:
+                Debug.Log($"[Anim] Freeze Removed Joueur {playerId+1}");
+  Transform cube = playerObj.transform.Find("IceCube");
+    if (cube != null) Destroy(cube.gameObject);
+
+    // Remettre la VRAIE couleur du joueur (pas forcément blanc)
+    Renderer pRend = playerObj.GetComponent<Renderer>();
+    pRend.material.color = GetPlayerColor(playerId); // Utilise ta fonction existante
+                break;
+        }
     }
 
     void InitializeHealthUI()
@@ -258,22 +385,29 @@ public class GameManager : MonoBehaviour
         }
         hasDoneSpawnPlayers = true;
     }
-    
-    void StartSelectionPhase()
+
+    void StartSelectionPhase(GameState state = null)
     {
         isSelectionPhase = true;
         selectionTimer = selectionTime;
-
-        // Initialiser les cibles par défaut (rester sur place)
-        for (int i = 0; i < 4; i++)
+ 
+        foreach (var pState in state.Players)
         {
-            if (players[i] != null && players[i].activeSelf)
+            if (players[pState.ID] != null && players[pState.ID].activeSelf)
             {
-                Vector2Int current = GetPlayerCurrentCell(i);
-                playerTargets[i] = current; // Par défaut: rester sur place
+                Vector2Int current = GetPlayerCurrentCell(pState.ID);
+                playerTargets[pState.ID] = current; // Par défaut: rester sur place
+            }
+            //todo fct remove Freezed effect
+            if (pState.isFrozen == 1 && pState.FreezeTurnsRemaining == 0)
+            {
+                engine.ClearFreezeEffect(pState.ID);
+                StartCoroutine(OnEffectRemoved(pState.ID, EffectType.Freeze, 0, 0));
             }
         }
-        if (playerControlModes[localPlayerID] == ControlMode.Human && players[localPlayerID] != null) {
+        if (playerControlModes[localPlayerID] == ControlMode.Human 
+        && players[localPlayerID] != null
+        && state.Players.Find(p => p.ID == localPlayerID).FreezeTurnsRemaining == 0) {
             StartCoroutine(ShowHighlightsAfterDelay(0.1f));
         }
     }
@@ -324,6 +458,21 @@ public class GameManager : MonoBehaviour
             GameObject border = gridManager.ShowCellAsSelectable(cell.x, cell.y);
             highlightedBorders.Add(border);
         }
+    }
+    
+    IEnumerator MoveUpAndDestroy(GameObject obj, bool slow = false)
+    {
+        float speed = slow ? 1f : 2f;
+        float lifetime = slow ? 1.5f : 1f;
+        float timer = 0f;
+
+        while (timer < lifetime)
+        {
+            obj.transform.Translate(Vector3.up * speed * Time.deltaTime);
+            timer += Time.deltaTime;
+            yield return null;
+        }
+        Destroy(obj);
     }
     
     void ClearHighlights()
@@ -417,16 +566,16 @@ public class GameManager : MonoBehaviour
         ClearHighlights();
 
         // 1. Récupérer la ligne du haut depuis le moteur
-            CellData[] topRowData = new CellData[state.Cols];
+            CellEffect[] topRowData = new CellEffect[state.Cols];
             for(int c=0; c < state.Cols; c++) {
                 topRowData[c] = state.Grid[state.Rows - 1, c];
             }
 
-            CellData[] newFutureRowData = state.FutureRow;
+            CellEffect[] newFutureRowData = state.FutureRow;
             if (newFutureRowData == null || newFutureRowData.Length != state.Cols)
             {
                 Debug.LogWarning("Le moteur n'a pas fourni de FutureRow valide. Utilisation d'un tableau vide.");
-                newFutureRowData = new CellData[state.Cols]; // Tableau vide par défaut
+                newFutureRowData = new CellEffect[state.Cols]; // Tableau vide par défaut
             }
             // 2. Passer cette ligne à Unity
             gridManager.InsertRow(topRowData, newFutureRowData);
@@ -482,7 +631,7 @@ public class GameManager : MonoBehaviour
         }
 
         // D. Relancer le tour suivant
-        StartSelectionPhase();
+        StartSelectionPhase(state);
     }
  
     IEnumerator JumpToPosition(GameObject player, Vector3 targetPosition)
@@ -583,6 +732,19 @@ public class GameManager : MonoBehaviour
 
                 case EffectType.Poison:
                     score = -200f; // 🟣 On évite
+                    break;
+
+                case EffectType.Freeze:
+                    score = -100f; // 🟣 On évite
+                    break;
+
+                case EffectType.Armor:
+                    if (aiPlayer.health < 50)
+                        score = 800f; // Très prioritaire
+                    else if (aiPlayer.health < 80 && aiPlayer.health > 50)
+                        score = 150f;
+                    else
+                        score = 50f;
                     break;
 
                 case EffectType.HealthPotion:

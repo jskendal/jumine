@@ -21,7 +21,7 @@ public class Player : MonoBehaviour
 
     // Timer d'effets
     private float effectTimer = 0f;
-    private BonusMalusType currentEffect = BonusMalusType.HealthPotion;
+    //private BonusMalusType currentEffect = BonusMalusType.HealthPotion;
  
     private GameObject healthBarCanvas;
  
@@ -43,7 +43,7 @@ public class Player : MonoBehaviour
             effectTimer -= Time.deltaTime;
             if (effectTimer <= 0)
             {
-                ResetEffect(currentEffect);
+                //ResetEffect(currentEffect);
             }
         }
         
@@ -73,96 +73,96 @@ public class Player : MonoBehaviour
     }
    
 
-    void ResetEffect(BonusMalusType type)
-    {
-        switch (type)
-        {
-            case BonusMalusType.SpeedBoost:
-                speedMultiplier = 1f;
-                break;
+    // void ResetEffect(BonusMalusType type)
+    // {
+    //     switch (type)
+    //     {
+    //         case BonusMalusType.SpeedBoost:
+    //             speedMultiplier = 1f;
+    //             break;
                 
-            case BonusMalusType.Invincibility:
-                isInvincible = false;
-                break;
+    //         case BonusMalusType.Invincibility:
+    //             isInvincible = false;
+    //             break;
                 
-            case BonusMalusType.Shrink:
-                transform.localScale = Vector3.one;
-                break;
+    //         case BonusMalusType.Shrink:
+    //             transform.localScale = Vector3.one;
+    //             break;
                 
-            case BonusMalusType.Freeze:
-                isFrozen = false;
-                break;
-        }
-    }
+    //         case BonusMalusType.Freeze:
+    //             isFrozen = false;
+    //             break;
+    //     }
+    // }
 
-    public void TakeDamage(int damage)
-    {
-            Debug.Log($"[TakeDamage] Tentative de dégâts sur PlayerID: {this.playerID}. GO: {this.gameObject.name}");
-        if (isInvincible) return;
+    // public void TakeDamage(int damage)
+    // {
+    //         Debug.Log($"[TakeDamage] Tentative de dégâts sur PlayerID: {this.playerID}. GO: {this.gameObject.name}");
+    //     if (isInvincible) return;
         
-        health -= damage;
-        health = Mathf.Max(health, 0);
-        //UpdateHealthUI();
+    //     health -= damage;
+    //     health = Mathf.Max(health, 0);
+    //     //UpdateHealthUI();
 
-        Debug.Log($"Player {playerID} took {damage} damage. Health: {health}");
+    //     Debug.Log($"Player {playerID} took {damage} damage. Health: {health}");
         
-        gameManager.UpdatePlayerHealthBar(playerID, health);
-        if (health <= 0)
-        {
-            Die();
-        }
-    }
+    //     gameManager.UpdatePlayerHealthBar(playerID, health);
+    //     if (health <= 0)
+    //     {
+    //         Die();
+    //     }
+    // }
     
-    public void Heal(int amount)
-    {
-        health += amount;
-        health = Mathf.Min(health, maxHealth);
-        // 🔥 Guérison du poison
-        poisonTurnsRemaining = 0;
-        gameManager.UpdatePlayerHealthBar(playerID, health);
-        Debug.Log($"Player {playerID} healed {amount}. Health: {health}");
-    }
+    // public void Heal(int amount)
+    // {
+    //     health += amount;
+    //     health = Mathf.Min(health, maxHealth);
+    //     // 🔥 Guérison du poison
+    //     poisonTurnsRemaining = 0;
+    //     gameManager.UpdatePlayerHealthBar(playerID, health);
+    //     Debug.Log($"Player {playerID} healed {amount}. Health: {health}");
+    // }
     
-    public void ApplyPoison(int turns, int damagePerTurn)
-    {
-        poisonTurnsRemaining = turns;
-        poisonDamagePerTurn = damagePerTurn;
-        Debug.Log($"Player {playerID} empoisonné pour {turns} tours ({damagePerTurn} dmg/tour)");
-    }
+    // public void ApplyPoison(int turns, int damagePerTurn)
+    // {
+    //     poisonTurnsRemaining = turns;
+    //     poisonDamagePerTurn = damagePerTurn;
+    //     Debug.Log($"Player {playerID} empoisonné pour {turns} tours ({damagePerTurn} dmg/tour)");
+    // }
 
-// Appelé à la fin de CHAQUE tour par le GameManager
-    public void ProcessTurnEndEffects()
-    {
-        if (poisonTurnsRemaining > 0)
-        {
-            TakeDamage(poisonDamagePerTurn);
-            poisonTurnsRemaining--;
-            Debug.Log($"Poison tick on Player {playerID}. Remaining turns: {poisonTurnsRemaining}");
-        }
-    }
+// Appelé à la fin de CHAQUE tour par le GameManager -update : Now in GameEngine
+    // public void ProcessTurnEndEffects()
+    // {
+    //     if (poisonTurnsRemaining > 0)
+    //     {
+    //         TakeDamage(poisonDamagePerTurn);
+    //         poisonTurnsRemaining--;
+    //         Debug.Log($"Poison tick on Player {playerID}. Remaining turns: {poisonTurnsRemaining}");
+    //     }
+    // }
 
-    public void ApplySpeedBoost(float multiplier, float duration)
-    {
-        speedMultiplier = multiplier;
-        Invoke(nameof(ResetSpeed), duration);
-    }
+    // public void ApplySpeedBoost(float multiplier, float duration)
+    // {
+    //     speedMultiplier = multiplier;
+    //     Invoke(nameof(ResetSpeed), duration);
+    // }
     
-    private void ResetSpeed()
-    {
-        speedMultiplier = 1f;
-    }
+    // private void ResetSpeed()
+    // {
+    //     speedMultiplier = 1f;
+    // }
     
-    void Die()
-    {
-        Debug.Log($"Player {playerID} died!");
-        if (healthBarCanvas != null)
-            healthBarCanvas.SetActive(false);
-        gameObject.SetActive(false);
-    }
+    // void Die()
+    // {
+    //     Debug.Log($"Player {playerID} died!");
+    //     if (healthBarCanvas != null)
+    //         healthBarCanvas.SetActive(false);
+    //     gameObject.SetActive(false);
+    // }
     
-    void OnDestroy()
-    {
-        if (healthBarCanvas != null)
-            Destroy(healthBarCanvas);
-    }
+    // void OnDestroy()
+    // {
+    //     if (healthBarCanvas != null)
+    //         Destroy(healthBarCanvas);
+    // }
 }

@@ -13,6 +13,7 @@ MonoBehaviour:
   m_Name: Poison
   m_EditorClassIdentifier: Assembly-CSharp::CellEffectData
   effectType: 3
-  iconSprite: {fileID: 10913, guid: 0000000000000000f000000000000000, type: 0}
-  backgroundColor: {r: 1, g: 0, b: 1, a: 1}
+  iconSprite: {fileID: 21300000, guid: e9802c2fe6b1a0847b161dca156ecb37, type: 3}
+  backgroundColor: {r: 1, g: 0, b: 0.41228485, a: 1}
+  iconTint: {r: 1, g: 0, b: 1, a: 1}
   futureRowAlpha: 0.51

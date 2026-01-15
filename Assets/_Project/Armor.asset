@@ -10,10 +10,10 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 6a5f93a296b7a0045808d4d1c4d106e5, type: 3}
-  m_Name: Bomb
+  m_Name: Armor
   m_EditorClassIdentifier: Assembly-CSharp::CellEffectData
-  effectType: 2
-  iconSprite: {fileID: 21300000, guid: 58d945fa8a9a29f46b52bfa9717ef3ba, type: 3}
-  backgroundColor: {r: 1, g: 0, b: 0, a: 0.3254902}
-  iconTint: {r: 0.745283, g: 0, b: 0.08007747, a: 1}
+  effectType: 5
+  iconSprite: {fileID: 21300000, guid: 76d3d402901ff4f449e2e456c348601f, type: 3}
+  backgroundColor: {r: 0, g: 1, b: 0, a: 1}
+  iconTint: {r: 0, g: 0, b: 1, a: 1}
   futureRowAlpha: 0.51

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 
 // 🔴 PAS DE USING UNITYENGINE ICI ! C'est IMPORTANT.
@@ -29,12 +30,12 @@ public struct PlayerAction
 /// <summary>
 /// Données d'une cellule (pas de visuel, juste la logique)
 /// </summary>
-public struct CellData
-{
-    public EffectType Type;
-    public int Value;       // Dégâts / Soin / Durée
-    public bool IsWeapon;   // True pour le missile
-}
+// public struct CellData
+// {
+//     public EffectType Type;
+//     public int Value;       // Dégâts / Soin / Durée
+//     public bool IsWeapon;   // True pour le missile
+// }
 
 /// <summary>
 /// État d'un joueur (pas de GameObject, juste les valeurs utiles)
@@ -49,6 +50,8 @@ public struct PlayerState
     public bool IsAlive;
     public int PoisonTurnsRemaining;
     public int ArmorTurnsRemaining;
+    public int FreezeTurnsRemaining;
+    public int isFrozen;
 }
 
 /// <summary>
@@ -57,18 +60,22 @@ public struct PlayerState
 public class GameState
 {
     public int CurrentTurn;
-    public CellData[,] Grid;
+    public CellEffect[,] Grid;
     public List<PlayerState> Players;
     public int Rows;
     public int Cols;
     public bool HasDoneFirstTurn;
-    public CellData[] FutureRow;
+    public CellEffect[] FutureRow;
 }
+
 #endregion
 
 #region MOTEUR DE JEU
 public class GameEngine
 {
+    public delegate void OnEffectApplied(int playerId, EffectType effectType, int value, int executionRank);
+    public event OnEffectApplied EffectApplied;
+
     private GameState _currentState;
     private readonly Random _rng = new Random(); // Générateur aléatoire PURE C#
 
@@ -84,14 +91,14 @@ public class GameEngine
             Cols = cols,
             CurrentTurn = 0,
             HasDoneFirstTurn = false,
-            Grid = new CellData[rows, cols],
+            Grid = new CellEffect[rows, cols],
             Players = new List<PlayerState>()
         };
 
         // Générer la grille initiale
         GenerateInitialGrid();
         
-        _currentState.FutureRow = new CellData[cols];
+        _currentState.FutureRow = new CellEffect[cols];
         for(int c=0; c<cols; c++) _currentState.FutureRow[c] = GenerateRandomCell(-1, c);
     }
 
@@ -128,41 +135,48 @@ public class GameEngine
         }
     }
 
-    /// <summary>
-    /// Génère une cellule aléatoire, avec règles de sécurité pour la ligne de spawn
-    /// </summary>
-    private CellData GenerateRandomCell(int row, int col)
+    private List<EffectWeight> possibleEffects = new List<EffectWeight>
     {
-        // 🔒 Ligne de spawn et première ligne au-dessus : TOUJOURS neutre pour le premier tour
+        new EffectWeight { type = EffectType.Missile,       chance = 0.05f, value = 30, isWeapon = true },
+        new EffectWeight { type = EffectType.Poison,        chance = 0.05f, value = 10, isWeapon = false, duration = 3f },
+        new EffectWeight { type = EffectType.Armor,         chance = 0.04f, value = 10, isWeapon = false, duration = 2f }, // Protection
+        new EffectWeight { type = EffectType.DamageBomb,    chance = 0.06f, value = 30, isWeapon = false },
+        new EffectWeight { type = EffectType.HealthPotion,  chance = 0.06f, value = 30, isWeapon = false },
+        new EffectWeight { type = EffectType.Freeze,        chance = 0.05f, value = 10, isWeapon = false, duration = 1f },
+        // 👇 LE NOUVEAU 👇
+        //new EffectWeight { type = EffectType.Freeze,    chance = 0.05f, value = 0,  isWeapon = false } // 5% de chance
+        // Total actuel : 0.05+0.10+0.10+0.10+0.10+0.05 = 0.50 (50%)
+        // -> Il reste 50% de chances d'avoir une case Neutre. C'est parfait !
+    };
+    private CellEffect GenerateRandomCell(int row, int col)
+    {
         if (row == 0 || (row == 1 && !_currentState.HasDoneFirstTurn))
         {
-            return new CellData { Type = EffectType.Neutral, Value = 0, IsWeapon = false };
+            return new CellEffect { type = EffectType.Neutral, value = 0, isWeapon = false };
         }
 
         float chance = (float)_rng.NextDouble();
+        float cumulative = 0f;
 
-        if (chance < 0.05f) // 5% Missile
+        foreach (var effect in possibleEffects)
         {
-            return new CellData { Type = EffectType.Missile, Value = 30, IsWeapon = true };
+            cumulative += effect.chance;
+            if (chance < cumulative)
+            {
+                return new CellEffect 
+                { 
+                    type = effect.type, 
+                    value = effect.value, 
+                    isWeapon = effect.isWeapon,
+                    duration = effect.duration
+                };
+            }
         }
-        else if (chance < 0.15f) // 10% Poison
-        {
-            return new CellData { Type = EffectType.Poison, Value = 10, IsWeapon = false };
-        }
-        else if (chance < 0.25f) // 10% Bombe
-        {
-            return new CellData { Type = EffectType.DamageBomb, Value = 30, IsWeapon = false };
-        }
-        else if (chance < 0.35f) // 10% Potion
-        {
-            return new CellData { Type = EffectType.HealthPotion, Value = 30, IsWeapon = false };
-        }
-        else // 65% Neutre
-        {
-            return new CellData { Type = EffectType.Neutral, Value = 0, IsWeapon = false };
-        }
+
+        // Si on a dépassé toutes les chances (ou si la liste est vide), c'est Neutre
+        return new CellEffect { type = EffectType.Neutral, value = 0, isWeapon = false };
     }
-
+ 
     /// <summary>
     /// Logique de décalage de la grille (remplace GridManager.InsertRow)
     /// </summary>
@@ -218,30 +232,56 @@ public class GameEngine
     /// </summary>
     private void ResolveCellEffects()
     {
-        for (int i = 0; i < _currentState.Players.Count; i++)
+        Console.WriteLine("=== 🎲 TOUR {_currentState.CurrentTurn} : RÉSOLUTION DES EFFETS ===");
+            // 1. Créer une liste d'indices et la mélanger
+        List<int> playerIndices = Enumerable.Range(0, _currentState.Players.Count).ToList();
+        for (int i = 0; i < playerIndices.Count; i++) {
+            int r = _rng.Next(i, playerIndices.Count);
+            int tmp = playerIndices[i]; playerIndices[i] = playerIndices[r]; playerIndices[r] = tmp;
+        }
+
+        int executionRank = 0; 
+        foreach (int i in playerIndices)
         {
             var player = _currentState.Players[i];
             if (!player.IsAlive) continue;
 
             var cell = _currentState.Grid[player.Row, player.Col];
+            if (cell.type == EffectType.Neutral) continue;
 
-            switch (cell.Type)
+            switch (cell.type)
             {
                 case EffectType.HealthPotion:
-                    player.Health = Math.Min(player.Health + cell.Value, player.MaxHealth);
+                    player.Health = Math.Min(player.Health + cell.value, player.MaxHealth);
+                    EffectApplied?.Invoke(player.ID, EffectType.HealthPotion, cell.value, executionRank);
+                    executionRank++;
                     break;
                 case EffectType.DamageBomb:
-                    player.Health = Math.Max(player.Health - cell.Value, 0);
+                    if (player.ArmorTurnsRemaining == 0)
+                    {
+                        player.Health = Math.Max(player.Health - cell.value, 0);
+                    }
+                    EffectApplied?.Invoke(player.ID, EffectType.DamageBomb, cell.value, executionRank);
+                    executionRank++;
                     break;
                 case EffectType.Poison:
-                    player.PoisonTurnsRemaining = 3;
+                    player.PoisonTurnsRemaining = (int)cell.duration;//=3
+                    executionRank++;
                     break;
                 case EffectType.Missile:
                     // Logique du missile : toucher tous les joueurs sur la même ligne
                     ResolveMissileEffect(player.Row);
+                    EffectApplied?.Invoke(player.ID, EffectType.Missile, cell.value, executionRank);
+                    executionRank++;
                     break;
                 case EffectType.Armor:
-                    player.ArmorTurnsRemaining = 2;
+                    player.ArmorTurnsRemaining = (int)cell.duration;//= 2;
+                    executionRank++;
+                    break;
+                case EffectType.Freeze:
+                    player.FreezeTurnsRemaining = (int)cell.duration;//= 1;
+                    player.isFrozen = 1;
+                    executionRank++;
                     break;
             }
 
@@ -273,6 +313,10 @@ public class GameEngine
                 player.ArmorTurnsRemaining = player.ArmorTurnsRemaining - 1;
             }
 
+            if (player.FreezeTurnsRemaining > 0)
+            {
+                player.FreezeTurnsRemaining = player.FreezeTurnsRemaining - 1;
+            }
             // Vérifier si le joueur est mort
             if (player.Health <= 0)
             {
@@ -296,7 +340,7 @@ public class GameEngine
             // Si le joueur a de l'armure, elle bloque les dégâts
             if (player.ArmorTurnsRemaining > 0)
             {
-                player.ArmorTurnsRemaining = 0;
+                //player.ArmorTurnsRemaining = 0;// not sure if we want to remove armor on missile hit
             }
             else
             {
@@ -319,7 +363,18 @@ public class GameEngine
         _currentState.Players.Add(player);
     }
 
-    
+    internal void ClearFreezeEffect(int iD)
+    {
+        int playerIndex = _currentState.Players.FindIndex(p => p.ID == iD);
+        if (playerIndex >= 0)
+        {
+            var player = _currentState.Players[playerIndex];
+            player.isFrozen = 0;
+            _currentState.Players[playerIndex] = player;
+        }
+    }
+
+
     #endregion
 }
 #endregion

@@ -21,4 +21,13 @@ public struct CellEffect
     public bool isWeapon;   // True si c'est un Missile (touche les autres)
 }
 
+public struct EffectWeight 
+{ 
+    public EffectType type; 
+    public float chance; // Entre 0.0 et 1.0
+    public int value; 
+    public bool isWeapon;
+    public float duration;
+}
+
 public enum ControlMode { Human, AI, Remote }

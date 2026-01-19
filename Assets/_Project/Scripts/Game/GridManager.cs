@@ -17,7 +17,6 @@ public class GridManager : MonoBehaviour
     private bool isGridReady = false;
     
     private HashSet<Vector2Int> selectableCells = new HashSet<Vector2Int>();
-    private bool hasDoneFirstTurn = false;
 
     void Start()
     {
@@ -190,7 +189,6 @@ public class GridManager : MonoBehaviour
         
         // 4. Générer une nouvelle future ligne
         GenerateFutureRow(newFutureRowData);
-        hasDoneFirstTurn = true;
     }
     
     public Vector3 GetCellWorldPosition(int row, int col)

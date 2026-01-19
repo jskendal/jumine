@@ -138,19 +138,20 @@ public class GameEngine
     private List<EffectWeight> possibleEffects = new List<EffectWeight>
     {
         new EffectWeight { type = EffectType.Missile,       chance = 0.05f, value = 30, isWeapon = true },
-        new EffectWeight { type = EffectType.Poison,        chance = 0.05f, value = 10, isWeapon = false, duration = 3f },
-        new EffectWeight { type = EffectType.Armor,         chance = 0.04f, value = 10, isWeapon = false, duration = 2f }, // Protection
+        new EffectWeight { type = EffectType.Poison,        chance = 0.05f, value = 10, isWeapon = false, duration = 4f },
+        new EffectWeight { type = EffectType.Armor,         chance = 0.04f, value = 10, isWeapon = false, duration = 3f }, // Protection
         new EffectWeight { type = EffectType.DamageBomb,    chance = 0.06f, value = 30, isWeapon = false },
         new EffectWeight { type = EffectType.HealthPotion,  chance = 0.06f, value = 30, isWeapon = false },
-        new EffectWeight { type = EffectType.Freeze,        chance = 0.05f, value = 10, isWeapon = false, duration = 1f },
+        new EffectWeight { type = EffectType.Freeze,        chance = 0.05f, value = 10, isWeapon = false, duration = 2f },
         // 👇 LE NOUVEAU 👇
         //new EffectWeight { type = EffectType.Freeze,    chance = 0.05f, value = 0,  isWeapon = false } // 5% de chance
         // Total actuel : 0.05+0.10+0.10+0.10+0.10+0.05 = 0.50 (50%)
         // -> Il reste 50% de chances d'avoir une case Neutre. C'est parfait !
     };
+
     private CellEffect GenerateRandomCell(int row, int col)
     {
-        if (row == 0 || (row == 1 && !_currentState.HasDoneFirstTurn))
+        if (row == 0 || (row == 1 ))//&& !_currentState.HasDoneFirstTurn
         {
             return new CellEffect { type = EffectType.Neutral, value = 0, isWeapon = false };
         }
@@ -182,28 +183,34 @@ public class GameEngine
     /// </summary>
     private void InsertNewRow()
     {
-        // 1. Détruire la ligne du bas (logiquement : on oublie ses données)
-        // 2. Décaler toutes les lignes vers le bas
-        for (int r = 1; r < _currentState.Rows; r++)
+        int rows = _currentState.Rows;
+        int cols = _currentState.Cols;
+
+        // 1. Décaler toutes les lignes vers le bas (logique identique à GridManager.InsertRow)
+        for (int r = 1; r < rows; r++)
         {
-            for (int c = 0; c < _currentState.Cols; c++)
+            for (int c = 0; c < cols; c++)
             {
                 _currentState.Grid[r - 1, c] = _currentState.Grid[r, c];
             }
         }
 
-        // 3. Générer la nouvelle ligne du haut
-        int topRow = _currentState.Rows - 1;
-        for (int c = 0; c < _currentState.Cols; c++)
+        // 2. La future row ENTRE dans la grille comme nouvelle ligne du haut
+        int topRow = rows - 1;
+        for (int c = 0; c < cols; c++)
         {
-            _currentState.Grid[topRow, c] = GenerateRandomCell(topRow, c);
+            _currentState.Grid[topRow, c] = _currentState.FutureRow[c];
         }
 
-        // 4. Marquer que le premier tour est passé
-        if (!_currentState.HasDoneFirstTurn)
+        // 3. Générer une NOUVELLE future row pour le tour suivant
+        for (int c = 0; c < cols; c++)
         {
-            _currentState.HasDoneFirstTurn = true;
+            _currentState.FutureRow[c] = GenerateRandomCell(-1, c);
         }
+
+        // 4. Optionnel : marquer que le premier tour est passé
+        // if (!_currentState.HasDoneFirstTurn)
+        //     _currentState.HasDoneFirstTurn = true;
     }
 
     /// <summary>
@@ -240,7 +247,7 @@ public class GameEngine
             int tmp = playerIndices[i]; playerIndices[i] = playerIndices[r]; playerIndices[r] = tmp;
         }
 
-        int executionRank = 0; 
+        int executionRank = 0;
         foreach (int i in playerIndices)
         {
             var player = _currentState.Players[i];
@@ -266,6 +273,7 @@ public class GameEngine
                     break;
                 case EffectType.Poison:
                     player.PoisonTurnsRemaining = (int)cell.duration;//=3
+                    EffectApplied?.Invoke(player.ID, EffectType.Poison, cell.value, executionRank);
                     executionRank++;
                     break;
                 case EffectType.Missile:
@@ -281,6 +289,7 @@ public class GameEngine
                 case EffectType.Freeze:
                     player.FreezeTurnsRemaining = (int)cell.duration;//= 1;
                     player.isFrozen = 1;
+                    EffectApplied?.Invoke(player.ID, EffectType.Freeze, cell.value, executionRank);
                     executionRank++;
                     break;
             }

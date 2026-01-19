@@ -54,6 +54,19 @@ public class GameManager : MonoBehaviour
     private List<PlayerAction> currentTurnActions = new List<PlayerAction>();
     private int[] playerCols = new int[] { 2, 7, 12, 17 }; 
 
+    private Queue<EffectEvent> effectQueue = new Queue<EffectEvent>();
+    private bool isProcessingEffects = false;
+    private bool areJumpsInProgress = false;
+
+    // Structure pour stocker les événements
+    public struct EffectEvent
+    {
+        public int playerId;
+        public EffectType effectType;
+        public int value;
+        public int rank;
+    }
+
     void Start()
     {
         // Initialiser le moteur de jeu
@@ -77,30 +90,33 @@ public class GameManager : MonoBehaviour
 
         InitializeHealthUI();
 
-        engine.EffectApplied += (playerId, effectType, value, executionRank) => StartCoroutine(OnEffectApplied(playerId, effectType, value, executionRank));
+        engine.EffectApplied += (playerId, effectType, value, rank) => 
+        {
+            effectQueue.Enqueue(new EffectEvent { playerId = playerId, effectType = effectType, value = value, rank = rank });
+            // if (!isProcessingEffects && !areJumpsInProgress)
+            // {
+            //     StartCoroutine(ProcessEffectQueue());
+            // }
+        };
     }
     
     void Update()
     {
             // FORCER la caméra à chaque frame pendant 0.5s
-        float timer = 0f;
-        timer += Time.deltaTime;
+        // float timer = 0f;
+        // timer += Time.deltaTime;
         
-        if (timer < 0.5f && mainCamera != null)
-        {
-            mainCamera.transform.position = new Vector3(0f, cameraHeight, -cameraDistance);
-            mainCamera.transform.rotation = Quaternion.Euler(cameraAngle, 0f, 0f);
-        }
+        // if (timer < 0.5f && mainCamera != null)
+        // {
+        //     mainCamera.transform.position = new Vector3(0f, cameraHeight, -cameraDistance);
+        //     mainCamera.transform.rotation = Quaternion.Euler(cameraAngle, 0f, 0f);
+        // }
+ 
         if (isSelectionPhase)
         {
             UpdateSelectionTimer();
         }
-        else
-        {
-            UpdateRowTimer();
-        }
     }
-    
 
     void Awake() {
         instance = this;
@@ -114,7 +130,25 @@ public class GameManager : MonoBehaviour
         playerControlModes[3] = ControlMode.AI;
     }
 
-    IEnumerator OnEffectApplied(int playerId, EffectType effectType, int value, int rank)
+    IEnumerator ProcessEffectQueue()
+    {
+        isProcessingEffects = true;
+
+        while (effectQueue.Count > 0)
+        {
+            EffectEvent evt = effectQueue.Dequeue();
+             yield return StartCoroutine(OnEffectAppliedCoroutine(evt.playerId, evt.effectType, evt.value, evt.rank));
+        }
+
+         yield return new WaitForSeconds(0.5f);
+
+        isProcessingEffects = false;
+
+        // Maintenant, on peut relancer le tour suivant
+        //StartSelectionPhase();
+    }
+
+    IEnumerator OnEffectAppliedCoroutine(int playerId, EffectType effectType, int value, int rank)
     {
          // 🔥 Le secret : chaque animation attend son tour
         yield return new WaitForSeconds(rank * 1.5f); 
@@ -151,53 +185,69 @@ public class GameManager : MonoBehaviour
                 break;
 
             case EffectType.Missile:
-                 int targetRow = value;
+                  int targetRow = value;
 
-                // 1. Créer le missile ET L'ORIENTER HORIZONTALEMENT
-                GameObject missile = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-                missile.transform.position = playerObj.transform.position + Vector3.up * 0.5f;
-                missile.transform.localScale = new Vector3(0.8f, 0.2f, 0.2f); // Plus long et plus fin
-                missile.transform.rotation = Quaternion.Euler(0f, 0f, 90f); // Rotation de 90° pour qu'il soit horizontal
-                missile.GetComponent<Renderer>().material.color = new Color(1f, 0.8f, 0f); // Jaune/orange pour le contraste
+                // 1. Créer le missile vers la DROITE
+                GameObject missileRight = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+                missileRight.transform.position = playerObj.transform.position + Vector3.up * 0.5f;
+                missileRight.transform.localScale = new Vector3(0.8f, 0.2f, 0.2f);
+                missileRight.GetComponent<Renderer>().material.color = new Color(1f, 0.8f, 0f);
 
-                // 2. Le reste du code de déplacement reste identique
+                // 2. Créer le missile vers la GAUCHE (symétrique)
+                GameObject missileLeft = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+                missileLeft.transform.position = playerObj.transform.position + Vector3.up * 0.5f;
+                missileLeft.transform.localScale = new Vector3(0.8f, 0.2f, 0.2f);
+                missileLeft.GetComponent<Renderer>().material.color = new Color(1f, 0.8f, 0f);
+
+                // 3. Déplacer le missile de droite vers la fin de la ligne
                 float speed = 12f;
-                float endX = gridManager.GetCellWorldPosition(targetRow, gridManager.columns - 1).x;
-                float startX = gridManager.GetCellWorldPosition(targetRow, 0).x;
+                float endXRight = gridManager.GetCellWorldPosition(targetRow, gridManager.columns - 1).x;
+                float startXRight = playerObj.transform.position.x;
 
-                while (Vector3.Distance(missile.transform.position, new Vector3(endX, missile.transform.position.y, missile.transform.position.z)) > 0.1f)
+                while (missileRight.transform.position.x < endXRight)
                 {
-                    missile.transform.Translate(Vector3.right * speed * Time.deltaTime);
+                    missileRight.transform.Translate(Vector3.right * speed * Time.deltaTime);
                     yield return null;
                 }
 
-                Destroy(missile);
+                // 4. Déplacer le missile de gauche vers le début de la ligne
+                float endXLeft = gridManager.GetCellWorldPosition(targetRow, 0).x;
+                float startXLeft = playerObj.transform.position.x;
+
+                while (missileLeft.transform.position.x > endXLeft)
+                {
+                    missileLeft.transform.Translate(Vector3.left * speed * Time.deltaTime);
+                    yield return null;
+                }
+
+                Destroy(missileRight);
+                Destroy(missileLeft);
                 break;
 
             case EffectType.Freeze:
                 Debug.Log($"[Anim] Freeze Joueur {playerId+1}");
-                Renderer playerRend = playerObj.GetComponent<Renderer>();
-                Color originalColor = playerRend.material.color;
+               Renderer playerRend = playerObj.GetComponent<Renderer>();
+                // On garde la couleur originale en mémoire (optionnel, mais utile si tu veux la restaurer pile poil)
+                // Color originalColor = playerRend.material.color; 
 
-                // 1. Créer le cube de glace AU DESSUS du joueur, pas dedans
+                // 1. Créer le cube de glace
                 GameObject iceCube = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                iceCube.name = "IceCube"; // Pour le retrouver plus tard dans OnEffectRemoved
-                iceCube.transform.parent = playerObj.transform; // Le rattacher au joueur pour qu'il suive
-                iceCube.transform.localPosition = Vector3.zero; // Position relative au joueur
-                iceCube.transform.localScale = playerObj.transform.localScale * 1.2f; // 20% plus grand pour être visible autour
-                iceCube.transform.localRotation = Quaternion.identity;
+                iceCube.name = "IceCube_FX"; // Nom unique
+                iceCube.transform.parent = playerObj.transform;
+                
+                // ASTUCE CRUCIALE : On le soulève un peu (0.1f) pour éviter qu'il ne rentre dans le sol/joueur
+                iceCube.transform.localPosition = Vector3.up * 0.1f; 
+                
+                // On l'agrandit vraiment (1.4f) pour qu'il dépasse du joueur
+                iceCube.transform.localScale = Vector3.one * 1.4f; 
 
-                // 2. Configurer le matériau de glace correctement
-                Material iceMat = new Material(Shader.Find("Standard"));
-                iceMat.color = new Color(0.3f, 0.7f, 1f, 0.4f); // Bleu glace plus visible
-                iceMat.SetFloat("_Mode", 3);
-                iceMat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-                iceMat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-                iceMat.SetInt("_ZWrite", 0); // Désactiver l'écriture en profondeur pour que le joueur soit visible à travers la glace
+                // 2. Shader "Legacy/Transparent/Diffuse" (beaucoup plus fiable que Standard pour la transparence)
+                Material iceMat = new Material(Shader.Find("Legacy Shaders/Transparent/Diffuse"));
+                iceMat.color = new Color(0.5f, 0.8f, 1f, 0.5f); // Bleu glace visible
                 iceCube.GetComponent<Renderer>().material = iceMat;
 
-                // 3. Tinter le joueur en bleu glace
-                playerRend.material.color = new Color(0.7f, 0.9f, 1f);
+                // 3. Changer la couleur du joueur (effet "congelé")
+                playerRend.material.color = new Color(0.6f, 0.8f, 1f); 
                 break;
 
             case EffectType.Poison:
@@ -223,20 +273,20 @@ public class GameManager : MonoBehaviour
 
     IEnumerator OnEffectRemoved(int playerId, EffectType effectType, int value, int rank)
     {
-        yield return new WaitForSeconds(rank * 1.5f);
         GameObject playerObj = players[playerId];
         switch(effectType)
         {
             case EffectType.Freeze:
                 Debug.Log($"[Anim] Freeze Removed Joueur {playerId+1}");
-  Transform cube = playerObj.transform.Find("IceCube");
-    if (cube != null) Destroy(cube.gameObject);
+                Transform cube = playerObj.transform.Find("IceCube_FX");
+                if (cube != null) Destroy(cube.gameObject);
 
-    // Remettre la VRAIE couleur du joueur (pas forcément blanc)
-    Renderer pRend = playerObj.GetComponent<Renderer>();
-    pRend.material.color = GetPlayerColor(playerId); // Utilise ta fonction existante
+                // Remettre la VRAIE couleur du joueur (pas forcément blanc)
+                Renderer pRend = playerObj.GetComponent<Renderer>();
+                pRend.material.color = GetPlayerColor(playerId); // Utilise ta fonction existante
                 break;
         }
+        yield return null; 
     }
 
     void InitializeHealthUI()
@@ -390,24 +440,33 @@ public class GameManager : MonoBehaviour
     {
         isSelectionPhase = true;
         selectionTimer = selectionTime;
- 
-        foreach (var pState in state.Players)
+        List<int> playersToUnfreeze = new List<int>();
+        if(state != null)
         {
-            if (players[pState.ID] != null && players[pState.ID].activeSelf)
+            foreach (var pState in state.Players)
             {
-                Vector2Int current = GetPlayerCurrentCell(pState.ID);
-                playerTargets[pState.ID] = current; // Par défaut: rester sur place
+                if (players[pState.ID] != null && players[pState.ID].activeSelf)
+                {
+                    Vector2Int current = GetPlayerCurrentCell(pState.ID);
+                    playerTargets[pState.ID] = current; // Par défaut: rester sur place
+                }
+                //todo fct remove Freezed effect
+                if (pState.isFrozen == 1 && pState.FreezeTurnsRemaining == 0)
+                {
+                    playersToUnfreeze.Add(pState.ID);
+                }
             }
-            //todo fct remove Freezed effect
-            if (pState.isFrozen == 1 && pState.FreezeTurnsRemaining == 0)
+            foreach (int playerId in playersToUnfreeze)
             {
-                engine.ClearFreezeEffect(pState.ID);
-                StartCoroutine(OnEffectRemoved(pState.ID, EffectType.Freeze, 0, 0));
+                engine.ClearFreezeEffect(playerId);
+                StartCoroutine(OnEffectRemoved(playerId, EffectType.Freeze, 0, 0));
             }
         }
+
         if (playerControlModes[localPlayerID] == ControlMode.Human 
         && players[localPlayerID] != null
-        && state.Players.Find(p => p.ID == localPlayerID).FreezeTurnsRemaining == 0) {
+        && (state == null 
+            || (state != null && state.Players.Find(p => p.ID == localPlayerID).FreezeTurnsRemaining == 0))) {
             StartCoroutine(ShowHighlightsAfterDelay(0.1f));
         }
     }
@@ -510,24 +569,11 @@ public class GameManager : MonoBehaviour
             EndSelectionPhase();
         }
     }
-    
-    void UpdateRowTimer()
-    {
-        rowTimer += Time.deltaTime;
-        if (timerText != null)
-            timerText.text = $"Insertion dans: {timeBetweenRows - rowTimer:F1}s";
-        
-        // if (rowTimer >= timeBetweenRows)
-        // {
-        //     InsertNewRow();
-        //     StartSelectionPhase();
-        // }
-    }
+ 
     
     void EndSelectionPhase()
     {
         isSelectionPhase = false;
-        rowTimer = 0f;
 
         // 1. IA : Demander aux IA de remplir leurs PlayerActions
         for (int i = 0; i < players.Length; i++)
@@ -552,12 +598,6 @@ public class GameManager : MonoBehaviour
         // 4. DEMANDER À UNITY D'ANIMER LE RÉSULTAT
         // On utilise les données du moteur pour dire à Unity quoi faire
         StartCoroutine(SyncUnityWithEngine(state));
-
-        // IMMÉDIATEMENT : Insertion et jump
-        //InsertNewRow();
-        
-        // NE PAS appeler StartSelectionPhase() ici
-        // Ce sera appelé après le jump (dans InsertNewRow())
     }
     
     IEnumerator SyncUnityWithEngine(GameState state)
@@ -580,7 +620,7 @@ public class GameManager : MonoBehaviour
             // 2. Passer cette ligne à Unity
             gridManager.InsertRow(topRowData, newFutureRowData);
 
-
+        areJumpsInProgress = true;
         // B. Faire sauter les joueurs vers leurs nouvelles positions calculées par le moteur
         foreach (var pState in state.Players)
         {
@@ -609,6 +649,12 @@ public class GameManager : MonoBehaviour
         }
 
         yield return new WaitForSeconds(jumpDuration + 0.1f);
+        areJumpsInProgress = false;
+
+        if (effectQueue.Count > 0)
+        {
+            yield return StartCoroutine(ProcessEffectQueue());
+        }
 
         // C. Mettre à jour les barres de vie et les effets visuels
         foreach (var pState in state.Players)
@@ -620,6 +666,13 @@ public class GameManager : MonoBehaviour
                 players[pState.ID].SetActive(false);
             }
         }
+
+            // ✅ 5. ATTENDRE QUE LES EFFETS SOIENT FINIS
+        while (isProcessingEffects)
+        {
+            yield return null; // Attend frame par frame
+        }
+    
 
             // 5. Vérifier la fin de partie
         int survivors = state.Players.Count(p => p.IsAlive);

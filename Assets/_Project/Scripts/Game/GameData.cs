@@ -30,4 +30,10 @@ public struct EffectWeight
     public float duration;
 }
 
+public struct EffectHitInfo
+{
+    public int PlayerId;   // victime
+    public int NewHealth;  // HP après l’impact
+}
+
 public enum ControlMode { Human, AI, Remote }

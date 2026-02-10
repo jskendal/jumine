@@ -55,6 +55,7 @@ public class GameManager : MonoBehaviour
     private int[] playerCols = new int[] { 2, 7, 12, 17 }; 
 
     private Queue<EffectEvent> effectQueue = new Queue<EffectEvent>();
+    private Queue<EffectEvent> removeEffectQueue = new Queue<EffectEvent>();
     private bool isProcessingEffects = false;
     private bool areJumpsInProgress = false;
 
@@ -62,9 +63,13 @@ public class GameManager : MonoBehaviour
     public struct EffectEvent
     {
         public int playerId;
+        public int launcherPlayerId;
         public EffectType effectType;
         public int value;
         public int rank;
+        public EffectHitInfo[] hits;
+        public int newHealth;
+        public List<int> participants;
     }
 
     void Start()
@@ -90,27 +95,60 @@ public class GameManager : MonoBehaviour
 
         InitializeHealthUI();
 
-        engine.EffectApplied += (playerId, effectType, value, rank) => 
+        engine.SingleEffectApplied += (playerId, type, row, rank, newHealth) =>
         {
-            effectQueue.Enqueue(new EffectEvent { playerId = playerId, effectType = effectType, value = value, rank = rank });
+            effectQueue.Enqueue(new EffectEvent {
+                playerId = playerId,
+                effectType = type,
+                value = row,
+                rank = rank,
+                hits = null,
+                newHealth = newHealth
+            });
+        };
+        engine.MultiEffectApplied += (launcherId, type, row, rank, hits) => 
+        {
+            effectQueue.Enqueue(new EffectEvent {
+                playerId = launcherId,
+                effectType = type,
+                value = row, 
+                rank = rank,
+                hits = hits 
+            });
             // if (!isProcessingEffects && !areJumpsInProgress)
-            // {
             //     StartCoroutine(ProcessEffectQueue());
-            // }
+        };
+        engine.SingleEffectRemoved += (playerId, type, rank) =>
+        {
+            removeEffectQueue.Enqueue(new EffectEvent {
+                playerId = playerId,
+                effectType = type,
+                rank = rank
+            });
+        };
+        engine.CollisionDetected += (launcherId, type, nbPlayers, rank, participants) => 
+        {
+            effectQueue.Enqueue(new EffectEvent {
+                playerId = launcherId,
+                effectType = type,
+                value = nbPlayers, // On utilise value pour stocker le nombre de joueurs
+                rank = rank,
+                participants = participants // On transmet la liste des IDs
+            });
         };
     }
     
     void Update()
     {
             // FORCER la caméra à chaque frame pendant 0.5s
-        // float timer = 0f;
-        // timer += Time.deltaTime;
+        float timer = 0f;
+        timer += Time.deltaTime;
         
-        // if (timer < 0.5f && mainCamera != null)
-        // {
-        //     mainCamera.transform.position = new Vector3(0f, cameraHeight, -cameraDistance);
-        //     mainCamera.transform.rotation = Quaternion.Euler(cameraAngle, 0f, 0f);
-        // }
+        if (timer < 0.5f && mainCamera != null)
+        {
+            mainCamera.transform.position = new Vector3(0f, cameraHeight, -cameraDistance);
+            mainCamera.transform.rotation = Quaternion.Euler(cameraAngle, 0f, 0f);
+        }
  
         if (isSelectionPhase)
         {
@@ -134,13 +172,20 @@ public class GameManager : MonoBehaviour
     {
         isProcessingEffects = true;
 
+
         while (effectQueue.Count > 0)
         {
             EffectEvent evt = effectQueue.Dequeue();
-             yield return StartCoroutine(OnEffectAppliedCoroutine(evt.playerId, evt.effectType, evt.value, evt.rank));
+            yield return StartCoroutine(OnEffectAppliedCoroutine(evt.playerId, evt.launcherPlayerId, evt.effectType, 
+                                                                evt.value, evt.rank, evt.hits, evt.newHealth, evt.participants));
+        }
+        while (removeEffectQueue.Count > 0)
+        {
+            EffectEvent evt = removeEffectQueue.Dequeue();
+            yield return StartCoroutine(OnEffectRemoved(evt.playerId, evt.effectType, evt.rank));
         }
 
-         yield return new WaitForSeconds(0.5f);
+        yield return new WaitForSeconds(0.5f);
 
         isProcessingEffects = false;
 
@@ -148,10 +193,11 @@ public class GameManager : MonoBehaviour
         //StartSelectionPhase();
     }
 
-    IEnumerator OnEffectAppliedCoroutine(int playerId, EffectType effectType, int value, int rank)
+    IEnumerator OnEffectAppliedCoroutine(int playerId, int launcherPlayerId, EffectType effectType, 
+                                            int value, int rank, EffectHitInfo[] hits, int newHealth, List<int> participants = null)
     {
          // 🔥 Le secret : chaque animation attend son tour
-        yield return new WaitForSeconds(rank * 1.5f); 
+        yield return new WaitForSeconds(rank * 0.5f); 
         // Tu récupères le joueur et tu joues l'animation
         GameObject playerObj = players[playerId];
         switch(effectType)
@@ -170,6 +216,7 @@ public class GameManager : MonoBehaviour
                     StartCoroutine(MoveUpAndDestroy(healParticle));
                 }
                 yield return new WaitForSeconds(0.5f);
+                UpdatePlayerHealthBar(playerId, newHealth);
                 break;
 
             case EffectType.DamageBomb:
@@ -182,46 +229,86 @@ public class GameManager : MonoBehaviour
                     yield return new WaitForEndOfFrame();
                 }
                 playerObj.transform.position = originalPos;
+                yield return new WaitForSeconds(0.5f);
+                UpdatePlayerHealthBar(playerId, newHealth);
+                break;
+
+            case EffectType.Laser:
+
+                Debug.Log($"[Anim] Laser Joueur {playerId + 1}");
+                int laserRow = value; // row du lanceur
+
+                // 1. Créer le faisceau laser (un long cube fin)
+                GameObject beam = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                beam.GetComponent<Renderer>().material.color = new Color(0f, 1f, 1f, 0.8f); // Cyan brillant
+
+                // Positionner au centre de la ligne
+                float gridCenterX = (gridManager.GetCellWorldPosition(laserRow, 0).x + gridManager.GetCellWorldPosition(laserRow, gridManager.columns - 1).x) / 2f;
+                Vector3 beamPos = new Vector3(gridCenterX, playerObj.transform.position.y + 0.5f, playerObj.transform.position.z);
+                beam.transform.position = beamPos;
+
+                // Redimensionner pour couvrir toute la largeur
+                float totalWidth = Mathf.Abs(gridManager.GetCellWorldPosition(laserRow, gridManager.columns - 1).x - gridManager.GetCellWorldPosition(laserRow, 0).x);
+                beam.transform.localScale = new Vector3(totalWidth, 0.02f, 0.05f);
+
+                yield return new WaitForSeconds(0.8f); // Durée du flash laser
+                Destroy(beam);
+
+                // 2. Mettre à jour le joueurs sur la ligne
+                foreach (var hit in hits)
+                {
+                    UpdatePlayerHealthBar(hit.PlayerId, hit.NewHealth);
+                }
                 break;
 
             case EffectType.Missile:
-                  int targetRow = value;
+                int mRow = value;
+                int launcherCol = engine.GetCurrentState().Players[playerId].Col;
+                float startX = playerObj.transform.position.x;
 
-                // 1. Créer le missile vers la DROITE
-                GameObject missileRight = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-                missileRight.transform.position = playerObj.transform.position + Vector3.up * 0.5f;
-                missileRight.transform.localScale = new Vector3(0.8f, 0.2f, 0.2f);
-                missileRight.GetComponent<Renderer>().material.color = new Color(1f, 0.8f, 0f);
+                // --- Trouver les X d'arrêt pour le visuel ---
+                float stopXRight = gridManager.GetCellWorldPosition(mRow, gridManager.columns - 1).x;
+                float stopXLeft = gridManager.GetCellWorldPosition(mRow, 0).x;
 
-                // 2. Créer le missile vers la GAUCHE (symétrique)
-                GameObject missileLeft = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-                missileLeft.transform.position = playerObj.transform.position + Vector3.up * 0.5f;
-                missileLeft.transform.localScale = new Vector3(0.8f, 0.2f, 0.2f);
-                missileLeft.GetComponent<Renderer>().material.color = new Color(1f, 0.8f, 0f);
-
-                // 3. Déplacer le missile de droite vers la fin de la ligne
-                float speed = 12f;
-                float endXRight = gridManager.GetCellWorldPosition(targetRow, gridManager.columns - 1).x;
-                float startXRight = playerObj.transform.position.x;
-
-                while (missileRight.transform.position.x < endXRight)
+                // On cherche les cibles réelles dans le GameState pour arrêter les missiles dessus
+                foreach (var p in engine.GetCurrentState().Players)
                 {
-                    missileRight.transform.Translate(Vector3.right * speed * Time.deltaTime);
+                    if (p.ID == playerId || !p.IsAlive || p.Row != mRow) continue;
+
+                    float pX = gridManager.GetCellWorldPosition(p.Row, p.Col).x;
+                    if (p.Col > launcherCol && pX < stopXRight) stopXRight = pX; // Plus proche à droite
+                    if (p.Col < launcherCol && pX > stopXLeft) stopXLeft = pX;   // Plus proche à gauche
+                }
+
+                // 1. Lancement des deux projectiles
+                GameObject mRight = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+                mRight.transform.position = playerObj.transform.position + Vector3.up * 0.5f;
+                mRight.transform.localScale = new Vector3(0.6f, 0.2f, 0.2f);
+                mRight.transform.rotation = Quaternion.Euler(0, 0, 90);
+                mRight.GetComponent<Renderer>().material.color = Color.yellow;
+
+                GameObject mLeft = Instantiate(mRight, mRight.transform.position, mRight.transform.rotation);
+
+                // 2. Animation de déplacement simultanée
+                float mSpeed = 15f;
+                while (mRight.transform.position.x < stopXRight || mLeft.transform.position.x > stopXLeft)
+                {
+                    if (mRight.transform.position.x < stopXRight)
+                        mRight.transform.position += Vector3.right * mSpeed * Time.deltaTime;
+
+                    if (mLeft.transform.position.x > stopXLeft)
+                        mLeft.transform.position += Vector3.left * mSpeed * Time.deltaTime;
+
                     yield return null;
                 }
 
-                // 4. Déplacer le missile de gauche vers le début de la ligne
-                float endXLeft = gridManager.GetCellWorldPosition(targetRow, 0).x;
-                float startXLeft = playerObj.transform.position.x;
+                // 3. Explosion et Update
+                Destroy(mRight); Destroy(mLeft);
 
-                while (missileLeft.transform.position.x > endXLeft)
+                foreach (var hit in hits)
                 {
-                    missileLeft.transform.Translate(Vector3.left * speed * Time.deltaTime);
-                    yield return null;
+                    UpdatePlayerHealthBar(hit.PlayerId, hit.NewHealth);
                 }
-
-                Destroy(missileRight);
-                Destroy(missileLeft);
                 break;
 
             case EffectType.Freeze:
@@ -262,17 +349,158 @@ public class GameManager : MonoBehaviour
                     StartCoroutine(MoveUpAndDestroy(poisonParticle, true));
                 }
                 yield return new WaitForSeconds(0.5f);
+                UpdatePlayerHealthBar(playerId, newHealth);
                 break;
 
             case EffectType.Armor:
                 Debug.Log($"[Anim] Armor Joueur {playerId+1}");
                 // Anim : bouclier lumineux
+                // 1. Créer le bouclier (une sphère autour du joueur)
+                GameObject shieldSphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                shieldSphere.name = "Armor_FX";
+                shieldSphere.transform.parent = playerObj.transform;
+                shieldSphere.transform.localPosition = Vector3.zero;
+                shieldSphere.transform.localScale = Vector3.one * 1.5f;
+
+                // 2. Configurer le matériau du bouclier
+                Material shieldMat = new Material(Shader.Find("Legacy Shaders/Transparent/Diffuse"));
+                shieldMat.color = new Color(0.1f, 0.4f, 1f, 0.6f); // Bleu plus foncé, moins transparent
+                shieldSphere.GetComponent<Renderer>().material = shieldMat;
+
+                // 3. Animation de pulsation (pour montrer que le bouclier est actif)
+                float pulseDuration = 0.5f;
+                float timer = 0f;
+                Vector3 originalScale = shieldSphere.transform.localScale;
+
+                while (timer < pulseDuration)
+                {
+                    float scaleMultiplier = 1f + Mathf.PingPong(timer * 2, 0.1f);
+                    shieldSphere.transform.localScale = originalScale * scaleMultiplier;
+                    timer += Time.deltaTime;
+                    yield return null;
+                }
+
+                // Le bouclier reste à sa taille normale après la pulsation
+                shieldSphere.transform.localScale = originalScale;
+                break;
+
+            case EffectType.CollisionDuel:
+                 Debug.Log($"⚔️ Duel Visuel lancé ! Participants: {string.Join(", ", participants)}");
+            
+                // 1. AFFICHER LA PIÈCE QUI TOURNE
+                GameObject coinFX = GameObject.CreatePrimitive(PrimitiveType.Sphere); // Ou un modèle 3D de pièce
+                coinFX.name = "DuelCoin_FX";
+
+                // Positionne la pièce au-dessus du centre de la case
+                Vector3 duelCellPos = gridManager.GetCellWorldPosition(
+                    engine.GetCurrentState().Players.First(p => p.ID == playerId).Row, // Position logique du joueur
+                    engine.GetCurrentState().Players.First(p => p.ID == playerId).Col
+                );
+                // On la place au-dessus des joueurs et on la met debout (rotation sur X)
+                coinFX.transform.position = duelCellPos + Vector3.up * 1.8f;
+                coinFX.transform.localScale = new Vector3(0.4f, 0.02f, 0.4f); // Plat comme une pièce
+                coinFX.transform.rotation = Quaternion.Euler(90f, 0f, 0f); 
+                coinFX.GetComponent<Renderer>().material.color = new Color(1f, 0.84f, 0f);
+
+                // Simple animation de rotation
+                StartCoroutine(RotateCoin(coinFX.transform));
+
+                bool isHumanInvolved = participants.Contains(localPlayerID) && playerControlModes[localPlayerID] == ControlMode.Human;
+                Dictionary<int, int> duelChoices = new Dictionary<int, int>();
+
+                // 2. DÉCLENCHER LA POPUP UI (Si le joueur est humain et participant)
+                // (Ceci sera une nouvelle coroutine ou une fonction qui gère l'UI)
+                if (participants.Contains(localPlayerID) && playerControlModes[localPlayerID] == ControlMode.Human)
+                {
+                    int humanChoice = 0; // 0 = Or, 1 = Argent
+                    bool choiceDone = false;
+                    Debug.Log($"Popup Flip Coin pour Joueur {localPlayerID + 1}");
+                    DuelUIManager.Instance.StartDuel((choice) =>
+                            {
+                                humanChoice = choice;
+                                duelChoices.Add(localPlayerID, humanChoice);
+                                choiceDone = true;
+                            });
+
+                    while (!choiceDone) yield return null;
+
+                    // Assigner le choix inverse à l'autre joueur (l'IA)
+                    int otherPlayerId = participants.First(p => p != localPlayerID);
+                    duelChoices.Add(otherPlayerId, humanChoice == 0 ? 1 : 0);
+                }
+
+                if (!isHumanInvolved)
+                {
+                    duelChoices.Add(participants[0], 0);
+                    duelChoices.Add(participants[1], 1);
+                    
+                    // Petite pause pour simuler la tension du duel
+                    yield return new WaitForSeconds(2.0f); 
+                }
+                
+                //yield return new WaitForSeconds(5.0f); // Simule le temps du choix du joueur + flip
+
+                // 4. NETTOYER L'ANIMATION DE LA PIÈCE
+                Destroy(coinFX);
+
+                        // 1. Demander au moteur de résoudre le duel
+                var duelData = engine.GetCurrentState().CurrentDuels.First(d => d.PlayerIDs.Contains(playerId));
+                var result = engine.ResolveDuelLogic(duelData, duelChoices);
+                bool goldWins;
+
+                if (participants.Contains(localPlayerID))
+                {
+                    // Si je suis impliqué
+                    int myChoice = duelChoices[localPlayerID]; // 0=Or, 1=Argent
+                    
+                    if (result.WinnerId == localPlayerID)
+                    {
+                        // J'ai gagné -> La pièce montre mon choix
+                        goldWins = myChoice == 0;
+                    }
+                    else
+                    {
+                        // J'ai perdu -> La pièce montre le choix de l'adversaire (l'inverse du mien)
+                        goldWins = myChoice != 0;
+                    }
+                }
+                else
+                {
+                    goldWins = true;
+                }
+                if (participants.Contains(localPlayerID) && playerControlModes[localPlayerID] == ControlMode.Human)
+                {
+                    yield return StartCoroutine(DuelUIManager.Instance.SpinCoinAndClose(goldWins));
+                }
+                GameObject winnerObj = players[result.WinnerId];
+                GameObject loserObj = players[result.LoserId];
+
+                // A. Le gagnant se replace au centre de la case
+                    Vector3 cellCenter = gridManager.GetCellWorldPosition(duelData.Row, duelData.Col);
+                    winnerObj.transform.position = cellCenter;
+
+                    // B. Le perdant est "poussé" (Glissade)
+                    Vector3 expulsionWorldPos = gridManager.GetCellWorldPosition(result.LoserNewPos.x, result.LoserNewPos.y);
+                    
+                    float slideDuration = 0.3f;
+                    float t = 0;
+                    Vector3 startPos = loserObj.transform.position;
+                    while (t < 1f)
+                    {
+                        t += Time.deltaTime / slideDuration;
+                        loserObj.transform.position = Vector3.Lerp(startPos, expulsionWorldPos, t);
+                        yield return null;
+                    }
+
+                engine.ResolveCellEffects(new List<int> { result.WinnerId, result.LoserId }); // 🔥 C'est ici que le moteur applique les effets liés au duel (ex: dégâts, gel, etc.) et met à jour les états des joueurs
+
                 break;
         }
     }
 
-    IEnumerator OnEffectRemoved(int playerId, EffectType effectType, int value, int rank)
+    IEnumerator OnEffectRemoved(int playerId, EffectType effectType, int rank)
     {
+        yield return new WaitForSeconds(rank * 0.5f); 
         GameObject playerObj = players[playerId];
         switch(effectType)
         {
@@ -285,8 +513,26 @@ public class GameManager : MonoBehaviour
                 Renderer pRend = playerObj.GetComponent<Renderer>();
                 pRend.material.color = GetPlayerColor(playerId); // Utilise ta fonction existante
                 break;
+
+            case EffectType.Armor:
+                Debug.Log($"[Anim] Armor Removed Joueur {playerId+1}");
+                Transform shield = playerObj.transform.Find("Armor_FX");
+                if (shield != null) Destroy(shield.gameObject);
+                break;
         }
         yield return null; 
+    }
+
+    IEnumerator RotateCoin(Transform coinTransform)
+    {
+        float duration = 5.0f; // La durée du choix du joueur
+        float timer = 0f;
+        while (timer < duration && coinTransform != null)
+        {
+            coinTransform.Rotate(Vector3.up * 720f * Time.deltaTime, Space.World);
+            timer += Time.deltaTime;
+            yield return null;
+        }
     }
 
     void InitializeHealthUI()
@@ -459,7 +705,7 @@ public class GameManager : MonoBehaviour
             foreach (int playerId in playersToUnfreeze)
             {
                 engine.ClearFreezeEffect(playerId);
-                StartCoroutine(OnEffectRemoved(playerId, EffectType.Freeze, 0, 0));
+                StartCoroutine(OnEffectRemoved(playerId, EffectType.Freeze, 0));
             }
         }
 
@@ -574,11 +820,13 @@ public class GameManager : MonoBehaviour
     void EndSelectionPhase()
     {
         isSelectionPhase = false;
-
+        GameState state = engine.GetCurrentState();
+        
         // 1. IA : Demander aux IA de remplir leurs PlayerActions
         for (int i = 0; i < players.Length; i++)
         {
-            if (playerControlModes[i] == ControlMode.AI && players[i].activeSelf)
+            if (playerControlModes[i] == ControlMode.AI && players[i].activeSelf 
+            && state.Players.Find(p => p.ID == i).FreezeTurnsRemaining == 0)
             {
                 // On utilise ta logique IA actuelle pour obtenir une cible
                 Vector2Int aiTarget = DetermineAITarget(i);
@@ -590,11 +838,7 @@ public class GameManager : MonoBehaviour
         // C'est ici que le "cerveau" travaille
         engine.ProcessTurn(currentTurnActions);
         currentTurnActions.Clear(); // On vide pour le prochain tour
-        
-
-        // 3. RÉCUPÉRER LE RÉSULTAT
-        GameState state = engine.GetCurrentState();
-
+ 
         // 4. DEMANDER À UNITY D'ANIMER LE RÉSULTAT
         // On utilise les données du moteur pour dire à Unity quoi faire
         StartCoroutine(SyncUnityWithEngine(state));
@@ -627,7 +871,7 @@ public class GameManager : MonoBehaviour
             // 1. Vérifier que l'ID est valide
             if (pState.ID < 0 || pState.ID >= players.Length)
             {
-                Debug.LogError($"ID Joueur invalide : {pState.ID}");
+                //Debug.LogError($"ID Joueur invalide : {pState.ID}");
                 continue; // Passe au joueur suivant
             }
 
@@ -637,9 +881,32 @@ public class GameManager : MonoBehaviour
             // 3. Vérifier que l'objet existe (il a pu être détruit si le joueur est mort)
             if (playerObj != null && playerObj.activeSelf)
             {
-                // Le joueur est vivant ET son objet existe -> On le bouge
-                Vector3 targetPos = gridManager.GetCellWorldPosition(pState.Row, pState.Col);
-                StartCoroutine(JumpToPosition(playerObj, targetPos));
+                 // A. Récupérer la cible que le joueur AVAIT choisie
+                Vector2Int intendedTarget = playerTargets[pState.ID];
+                // B. Récupérer la position où le moteur dit qu'il finit (après ricochet)
+                Vector2Int actualTarget = new Vector2Int(pState.Row, pState.Col);
+
+               // --- CAS 1 : LE RICOCHET (Intrus 3 et 4) ---
+                if (intendedTarget.x != actualTarget.x || intendedTarget.y != actualTarget.y)
+                {
+                    StartCoroutine(ReboundAnimation(playerObj, intendedTarget, actualTarget));
+                }
+                // --- CAS 2 : LE DUEL (Offset de 0.3) ---
+                else if (state.PlayerFinalPositions.ContainsKey(pState.ID))
+                {
+                    var duel = state.CurrentDuels.FirstOrDefault(d => d.PlayerIDs.Contains(pState.ID));
+                    int indexInDuel = duel.PlayerIDs.IndexOf(pState.ID);
+                    float offset = (indexInDuel == 0) ? -0.3f : 0.3f;
+                    
+                    Vector3 targetPos = gridManager.GetCellWorldPosition(pState.Row, pState.Col) + Vector3.right * offset;
+                    StartCoroutine(JumpToPosition(playerObj, targetPos));
+                }
+                // --- CAS 3 : SAUT NORMAL ---
+                else
+                {
+                    Vector3 targetPos = gridManager.GetCellWorldPosition(pState.Row, pState.Col);
+                    StartCoroutine(JumpToPosition(playerObj, targetPos));
+                }
             }
             else if (pState.IsAlive)
             {
@@ -656,23 +923,20 @@ public class GameManager : MonoBehaviour
             yield return StartCoroutine(ProcessEffectQueue());
         }
 
-        // C. Mettre à jour les barres de vie et les effets visuels
-        foreach (var pState in state.Players)
-        {
-            UpdatePlayerHealthBar(pState.ID, pState.Health);
-            
-            if (!pState.IsAlive && players[pState.ID].activeSelf)
-            {
-                players[pState.ID].SetActive(false);
-            }
-        }
 
             // ✅ 5. ATTENDRE QUE LES EFFETS SOIENT FINIS
         while (isProcessingEffects)
         {
             yield return null; // Attend frame par frame
         }
-    
+ 
+        foreach (var pState in state.Players)
+        {
+            if (!pState.IsAlive && players[pState.ID].activeSelf)
+            {
+                players[pState.ID].SetActive(false);
+            }
+        }
 
             // 5. Vérifier la fin de partie
         int survivors = state.Players.Count(p => p.IsAlive);
@@ -686,7 +950,31 @@ public class GameManager : MonoBehaviour
         // D. Relancer le tour suivant
         StartSelectionPhase(state);
     }
- 
+    
+    IEnumerator ReboundAnimation(GameObject player, Vector2Int intended, Vector2Int actual)
+    {
+        // 1. Saut vers la case centrale (la cible cliquée)
+        Vector3 intendedWorldPos = gridManager.GetCellWorldPosition(intended.x, intended.y);
+        yield return StartCoroutine(JumpToPosition(player, intendedWorldPos));
+
+        // 2. Petit temps d'arrêt ou "choc"
+        yield return new WaitForSeconds(0.05f);
+
+        // 3. Glissade/Rebond vers la case de destination finale (actual)
+        Vector3 actualWorldPos = gridManager.GetCellWorldPosition(actual.x, actual.y);
+        float t = 0;
+        float bounceDuration = 0.2f;
+        Vector3 startPos = player.transform.position;
+
+        while (t < 1f)
+        {
+            t += Time.deltaTime / bounceDuration;
+            // Mouvement linéaire rapide (glissade)
+            player.transform.position = Vector3.Lerp(startPos, actualWorldPos, t);
+            yield return null;
+        }
+    }
+
     IEnumerator JumpToPosition(GameObject player, Vector3 targetPosition)
     {
         Vector3 startPosition = player.transform.position;
@@ -819,6 +1107,7 @@ public class GameManager : MonoBehaviour
                     break;
 
                 case EffectType.Missile:
+                case EffectType.Laser:
                     score = 75f; // 🟡 On autorise l'IA à prendre le missile pour attaquer les autres
                     break;
             }

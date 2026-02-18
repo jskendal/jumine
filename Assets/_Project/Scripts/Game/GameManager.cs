@@ -4,13 +4,16 @@ using System.Collections.Generic;
 using static GridManager;
 using UnityEngine.UI;
 using System.Linq;
+using System.Threading.Tasks;
 
 public class GameManager : MonoBehaviour
 {
     [Header("Références")]
     public GridManager gridManager;
     public GameObject playerPrefab;
-    
+    public SimpleWebSocketClient networkClient;        
+        
+
     [Header("Paramètres")]
     public float timeBetweenRows = 5f;
     public float selectionTime = 10f;
@@ -68,6 +71,7 @@ public class GameManager : MonoBehaviour
         public int value;
         public int rank;
         public EffectHitInfo[] hits;
+        public Direction weaponDirection;
         public int newHealth;
         public List<int> participants;
     }
@@ -106,14 +110,15 @@ public class GameManager : MonoBehaviour
                 newHealth = newHealth
             });
         };
-        engine.MultiEffectApplied += (launcherId, type, row, rank, hits) => 
+        engine.MultiEffectApplied += (launcherId, type, row, rank, hits, direction) => 
         {
             effectQueue.Enqueue(new EffectEvent {
                 playerId = launcherId,
                 effectType = type,
                 value = row, 
                 rank = rank,
-                hits = hits 
+                hits = hits,
+                weaponDirection = direction
             });
             // if (!isProcessingEffects && !areJumpsInProgress)
             //     StartCoroutine(ProcessEffectQueue());
@@ -138,6 +143,25 @@ public class GameManager : MonoBehaviour
         };
     }
     
+        // ═══════════════════════════════════════════
+    // NOUVELLE MÉTHODE : Envoyer l'action au serveur
+    // ═══════════════════════════════════════════
+    
+    public void SendActionToServer(int row, int col)
+    {
+        if (networkClient == null)
+        {
+            Debug.LogError("NetworkClient non assigné !");
+            return;
+        }
+
+        // Envoyer JSON : {"op":"action", "row":X, "col":Y}
+        string json = $"{{\"op\":\"action\", \"row\":{row}, \"col\":{col}}}";
+        networkClient.Send(json);
+        
+        Debug.Log($"[Envoi] Action: ({row}, {col})");
+    }
+
     void Update()
     {
             // FORCER la caméra à chaque frame pendant 0.5s
@@ -177,7 +201,7 @@ public class GameManager : MonoBehaviour
         {
             EffectEvent evt = effectQueue.Dequeue();
             yield return StartCoroutine(OnEffectAppliedCoroutine(evt.playerId, evt.launcherPlayerId, evt.effectType, 
-                                                                evt.value, evt.rank, evt.hits, evt.newHealth, evt.participants));
+                                                                evt.value, evt.rank, evt.hits, evt.newHealth, evt.weaponDirection, evt.participants));
         }
         while (removeEffectQueue.Count > 0)
         {
@@ -194,7 +218,7 @@ public class GameManager : MonoBehaviour
     }
 
     IEnumerator OnEffectAppliedCoroutine(int playerId, int launcherPlayerId, EffectType effectType, 
-                                            int value, int rank, EffectHitInfo[] hits, int newHealth, List<int> participants = null)
+                                            int value, int rank, EffectHitInfo[] hits, int newHealth, Direction weaponDirection = Direction.None, List<int> participants = null)
     {
          // 🔥 Le secret : chaque animation attend son tour
         yield return new WaitForSeconds(rank * 0.5f); 
@@ -231,6 +255,52 @@ public class GameManager : MonoBehaviour
                 playerObj.transform.position = originalPos;
                 yield return new WaitForSeconds(0.5f);
                 UpdatePlayerHealthBar(playerId, newHealth);
+                break;
+
+            case EffectType.Spray:
+                Debug.Log($"[Anim] Spray Joueur {playerId+1}");
+             
+                List<Vector3> sprayDirs = new List<Vector3>();
+                
+                if (weaponDirection == Direction.Left || weaponDirection == Direction.LeftAndRight || weaponDirection == Direction.All)
+                    sprayDirs.Add(Vector3.left);
+                if (weaponDirection == Direction.Right || weaponDirection == Direction.LeftAndRight || weaponDirection == Direction.All)
+                    sprayDirs.Add(Vector3.right);
+
+                if(weaponDirection == Direction.None)
+                {
+                    sprayDirs.Add(Vector3.right); //todo random direction vector
+                }
+                foreach (var baseDir in sprayDirs)
+                {
+                    // On crée un "nuage" de 10 particules par direction
+                    for (int i = 0; i < 30; i++)
+                    {
+                        GameObject p = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                        p.transform.position = playerObj.transform.position + Vector3.up * 0.5f;
+                        p.transform.localScale = Vector3.one * 0.1f;
+                        p.GetComponent<Renderer>().material.color = new Color(1f, 0.5f, 0f, 0.8f); // Orange/Feu
+                        Destroy(p.GetComponent<BoxCollider>()); // Important pour la perf
+
+                        // On ajoute de la variation pour faire un "cône"
+                        // On dévie la direction de base un peu vers l'avant/arrière (Z) et haut/bas (Y)
+                        Vector3 spread = new Vector3(
+                            baseDir.x, 
+                            Random.Range(-0.2f, 0.2f), // Dispersion verticale
+                            Random.Range(-0.8f, 0.8f)  // Dispersion largeur (Z) sur 3 cases
+                        );
+
+                        // On lance le mouvement (3 cases = environ cellSize * 3)
+                        float sprayDistance = gridManager.cellSize * 3f;
+                        StartCoroutine(MoveSprayParticle(p, spread.normalized, sprayDistance));
+                    }
+                }
+                yield return new WaitForSeconds(0.8f); // Temps pour voir le nuage
+
+                foreach (var hit in hits)
+                {
+                    UpdatePlayerHealthBar(hit.PlayerId, hit.NewHealth);
+                }
                 break;
 
             case EffectType.Laser:
@@ -442,60 +512,112 @@ public class GameManager : MonoBehaviour
 
                 // 4. NETTOYER L'ANIMATION DE LA PIÈCE
                 Destroy(coinFX);
-
-                        // 1. Demander au moteur de résoudre le duel
-                var duelData = engine.GetCurrentState().CurrentDuels.First(d => d.PlayerIDs.Contains(playerId));
-                var result = engine.ResolveDuelLogic(duelData, duelChoices);
-                bool goldWins;
-
-                if (participants.Contains(localPlayerID))
-                {
-                    // Si je suis impliqué
-                    int myChoice = duelChoices[localPlayerID]; // 0=Or, 1=Argent
-                    
-                    if (result.WinnerId == localPlayerID)
-                    {
-                        // J'ai gagné -> La pièce montre mon choix
-                        goldWins = myChoice == 0;
-                    }
-                    else
-                    {
-                        // J'ai perdu -> La pièce montre le choix de l'adversaire (l'inverse du mien)
-                        goldWins = myChoice != 0;
-                    }
-                }
-                else
-                {
-                    goldWins = true;
-                }
-                if (participants.Contains(localPlayerID) && playerControlModes[localPlayerID] == ControlMode.Human)
-                {
-                    yield return StartCoroutine(DuelUIManager.Instance.SpinCoinAndClose(goldWins));
-                }
-                GameObject winnerObj = players[result.WinnerId];
-                GameObject loserObj = players[result.LoserId];
-
-                // A. Le gagnant se replace au centre de la case
-                    Vector3 cellCenter = gridManager.GetCellWorldPosition(duelData.Row, duelData.Col);
-                    winnerObj.transform.position = cellCenter;
-
-                    // B. Le perdant est "poussé" (Glissade)
-                    Vector3 expulsionWorldPos = gridManager.GetCellWorldPosition(result.LoserNewPos.x, result.LoserNewPos.y);
-                    
-                    float slideDuration = 0.3f;
-                    float t = 0;
-                    Vector3 startPos = loserObj.transform.position;
-                    while (t < 1f)
-                    {
-                        t += Time.deltaTime / slideDuration;
-                        loserObj.transform.position = Vector3.Lerp(startPos, expulsionWorldPos, t);
-                        yield return null;
-                    }
-
-                engine.ResolveCellEffects(new List<int> { result.WinnerId, result.LoserId }); // 🔥 C'est ici que le moteur applique les effets liés au duel (ex: dégâts, gel, etc.) et met à jour les états des joueurs
+ 
+                yield return StartCoroutine(ResolveDuel(playerId, duelChoices, participants));
 
                 break;
         }
+    }
+
+    IEnumerator MoveSprayParticle(GameObject p, Vector3 dir, float distance)
+    {
+        float timer = 0f;
+        float duration = 0.5f;
+        Vector3 start = p.transform.position;
+        Vector3 end = start + (dir * distance);
+
+        while (timer < duration)
+        {
+            if (p == null) yield break;
+            timer += Time.deltaTime;
+            float progress = timer / duration;
+            
+            // Mouvement vers l'extérieur
+            p.transform.position = Vector3.Lerp(start, end, progress);
+            
+            // La particule devient de plus en plus transparente
+            Renderer r = p.GetComponent<Renderer>();
+            Color c = r.material.color;
+            c.a = 1f - progress;
+            r.material.color = c;
+
+            yield return null;
+        }
+        Destroy(p);
+    }
+ 
+    IEnumerator ResolveDuel(int playerId, Dictionary<int, int> duelChoices, List<int> participants)
+    {
+        // 1. Demander au moteur de résoudre le duel
+        var duelData = engine.GetCurrentState().CurrentDuels.First(d => d.PlayerIDs.Contains(playerId));
+        var result = engine.ResolveDuelLogic(duelData, duelChoices);
+        bool goldWins;
+
+        if (participants.Contains(localPlayerID))
+        {
+            // Si je suis impliqué
+            int myChoice = duelChoices[localPlayerID]; // 0=Or, 1=Argent
+
+            if (result.WinnerId == localPlayerID)
+            {
+                // J'ai gagné -> La pièce montre mon choix
+                goldWins = myChoice == 0;
+            }
+            else
+            {
+                // J'ai perdu -> La pièce montre le choix de l'adversaire (l'inverse du mien)
+                goldWins = myChoice != 0;
+            }
+        }
+        else
+        {
+            goldWins = true;
+        }
+        if (participants.Contains(localPlayerID) && playerControlModes[localPlayerID] == ControlMode.Human)
+        {
+            yield return StartCoroutine(DuelUIManager.Instance.SpinCoinAndClose(goldWins));
+        }
+        GameObject winnerObj = players[result.WinnerId];
+        GameObject loserObj = players[result.LoserId];
+
+        // A. Le gagnant se replace au centre de la case
+        Vector3 cellCenter = gridManager.GetCellWorldPosition(duelData.Row, duelData.Col);
+
+        // Le gagnant saute
+        float jumpWinDuration = 0.4f;
+        float timerJ = 0f;
+        Vector3 startWinPos = winnerObj.transform.position;
+
+        while (timerJ < jumpWinDuration)
+        {
+            timerJ += Time.deltaTime;
+            float progress = timerJ / jumpWinDuration;
+            // Lerp vers le centre + courbe en cloche
+            Vector3 currentPos = Vector3.Lerp(startWinPos, cellCenter, progress);
+            float height = Mathf.Sin(progress * Mathf.PI) * 1.5f; // Saut bien visible
+            winnerObj.transform.position = new Vector3(currentPos.x, startWinPos.y + height, currentPos.z);
+            yield return null;
+        }
+        winnerObj.transform.position = cellCenter;
+
+        // 🔊 Ici tu pourrais jouer un son "Boom" ou "Impact"
+
+
+        // B. Le perdant est "poussé" (Glissade)
+        Vector3 expulsionWorldPos = gridManager.GetCellWorldPosition(result.LoserNewPos.Row, result.LoserNewPos.Col);
+
+        float slideDuration = 0.3f;
+        float t = 0;
+        Vector3 startPos = loserObj.transform.position;
+        while (t < 1f)
+        {
+            t += Time.deltaTime / slideDuration;
+            loserObj.transform.position = Vector3.Lerp(startPos, expulsionWorldPos, t);
+            yield return null;
+        }
+        
+        engine.ResolveCellEffects(participants); // 🔥 C'est ici que le moteur applique les effets liés au duel (ex: dégâts, gel, etc.) et met à jour les états des joueurs
+
     }
 
     IEnumerator OnEffectRemoved(int playerId, EffectType effectType, int rank)
@@ -611,6 +733,11 @@ public class GameManager : MonoBehaviour
             fillImage.enabled = false; // Cache la barre de vie
             // Tu peux aussi désactiver le Slider entier ou son GameObject pour un joueur KO
             // targetSlider.gameObject.SetActive(false); 
+            
+            // if (players[playerIndex].activeSelf)
+            // {
+            //     players[playerIndex].SetActive(false);
+            // }
         }
         else
         {
@@ -837,13 +964,115 @@ public class GameManager : MonoBehaviour
          // 2. EXÉCUTER LA LOGIQUE DANS LE MOTEUR
         // C'est ici que le "cerveau" travaille
         engine.ProcessTurn(currentTurnActions);
+
+        // ✅// ✅// ✅
+        //SendActionsToServer(currentTurnActions);
+        // ✅// ✅// ✅
+
         currentTurnActions.Clear(); // On vide pour le prochain tour
  
         // 4. DEMANDER À UNITY D'ANIMER LE RÉSULTAT
         // On utilise les données du moteur pour dire à Unity quoi faire
+        // ✅// ✅// ✅ 
         StartCoroutine(SyncUnityWithEngine(state));
+        
+               // 1. Récupérer la ligne du haut depuis le moteur
+            // CellEffect[] topRowData = new CellEffect[state.Cols];
+            // for(int c=0; c < state.Cols; c++) {
+            //     topRowData[c] = state.Grid[state.Rows - 1, c];
+            // }
+
+            // CellEffect[] newFutureRowData = state.FutureRow;
+            // if (newFutureRowData == null || newFutureRowData.Length != state.Cols)
+            // {
+            //     Debug.LogWarning("Le moteur n'a pas fourni de FutureRow valide. Utilisation d'un tableau vide.");
+            //     newFutureRowData = new CellEffect[state.Cols]; // Tableau vide par défaut
+            // }
+            // // 2. Passer cette ligne à Unity
+            // gridManager.InsertRow(topRowData, newFutureRowData);
     }
     
+    // ✅ // ✅// ✅// ✅// ✅ // ✅// ✅// ✅// ✅ // ✅// ✅// ✅
+    private TaskCompletionSource<bool>? _turnCompletion;
+    private async void SendActionsToServer(List<PlayerAction> actions)
+    {
+        _turnCompletion = new TaskCompletionSource<bool>();
+        // Convertir les actions en JSON
+        var actionList = new List<object>();
+        foreach (var action in actions)
+        {
+            actionList.Add(new {
+                playerID = action.PlayerID,
+                targetRow = action.TargetRow,
+                targetCol = action.TargetCol
+            });
+        }
+
+        string json = Newtonsoft.Json.JsonConvert.SerializeObject(new {
+            op = "submit_actions",
+            turn = engine.GetCurrentState().CurrentTurn + 1,
+            actions = actionList
+        });
+
+        // Envoyer via WebSocket
+        await networkClient.Send(json);
+        // await Task.Delay(2000);
+            // Attendre la réponse du serveur
+        await _turnCompletion.Task;
+    }
+
+    // ✅ // ✅// ✅// ✅
+    private async void SendActionsToServerTest2(List<PlayerAction> actions)
+    {
+        // On envoie juste les actions, pas besoin de dictionnaire complexe
+        string json = Newtonsoft.Json.JsonConvert.SerializeObject(new {
+            op = "submit_actions",
+            turn = engine.GetCurrentState().CurrentTurn + 1,
+            actions = actions  // La liste directe de PlayerAction
+        });
+
+        await networkClient.Send(json);
+        Debug.Log($"[Réseau] Actions envoyées au serveur: {json}");
+    }
+
+    public void OnServerMessage(string json)
+    {
+        Debug.Log("[GameManager] Message reçu: " + json);
+        
+        // Ici tu parseras le JSON plus tard
+        // Pour l'instant, on teste juste la réception
+        if (json.Contains("turn_result"))
+        {
+            Debug.Log("[GameManager] Tour reçu !");
+            // TODO: Parser l'état et les events, puis appeler SyncUnityWithEngine
+            var root = Newtonsoft.Json.Linq.JObject.Parse(json);
+            string stateJson = root["state"].ToString();
+        
+            GameState newState = Newtonsoft.Json.JsonConvert.DeserializeObject<GameState>(stateJson);
+            List<GameEventData> events = Newtonsoft.Json.JsonConvert.DeserializeObject<List<GameEventData>>(root["events"].ToString());
+             // ✅ Convertir les events serveur en EffectEvent pour ta queue existante
+            foreach (var evt in events)
+            {
+                effectQueue.Enqueue(new EffectEvent
+                {
+                    playerId = evt.PlayerId,
+                    launcherPlayerId = evt.LauncherId,
+                    effectType = evt.Type,
+                    value = evt.Row,
+                    rank = evt.Rank,
+                    hits = evt.Hits,
+                    newHealth = evt.NewHealth,
+                    weaponDirection = evt.WeaponDirection,
+                    participants = evt.Participants
+                });
+            }
+                StartCoroutine(SyncUnityWithEngine(newState));
+                   _turnCompletion?.TrySetResult(true);
+                
+        }
+    }
+
+
     IEnumerator SyncUnityWithEngine(GameState state)
     {
             // 1. Désactiver les choix visuels (cyan/jaune)
@@ -1108,6 +1337,7 @@ public class GameManager : MonoBehaviour
 
                 case EffectType.Missile:
                 case EffectType.Laser:
+                case EffectType.Spray:
                     score = 75f; // 🟡 On autorise l'IA à prendre le missile pour attaquer les autres
                     break;
             }

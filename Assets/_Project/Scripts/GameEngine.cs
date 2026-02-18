@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using UnityEngine;
+ 
 
 // 🔴 PAS DE USING UNITYENGINE ICI ! C'est IMPORTANT.
 
@@ -17,8 +17,11 @@ public enum EffectType
     Armor, 
     Freeze,
     Laser,
+    Spray,
     CollisionDuel
 }
+
+public enum Direction { Up, Down, UpAndDown, Left, Right, LeftAndRight, All, None } 
 
 /// <summary>
 /// Action choisie par un joueur pour un tour : sa cible
@@ -71,7 +74,7 @@ public class GameState
     public bool HasDoneFirstTurn;
     public CellEffect[] FutureRow;
     public List<CollisionDuel> CurrentDuels = new List<CollisionDuel>();
-    public Dictionary<int, Vector2Int> PlayerFinalPositions = new Dictionary<int, Vector2Int>();
+    public Dictionary<int, Position> PlayerFinalPositions = new Dictionary<int, Position>();
 }
 
 public struct CollisionDuel
@@ -85,7 +88,7 @@ public struct DuelResult
 {
     public int WinnerId;
     public int LoserId;
-    public Vector2Int LoserNewPos;
+    public Position LoserNewPos;
 }
 
 #endregion
@@ -94,7 +97,7 @@ public struct DuelResult
 public class GameEngine
 {
     public delegate void OnSingleEffectApplied(int playerId, EffectType type, int row, int rank, int newHealth);
-    public delegate void OnMultiEffectApplied(int launcherId, EffectType type, int row, int rank, EffectHitInfo[] hits);
+    public delegate void OnMultiEffectApplied(int launcherId, EffectType type, int row, int rank, EffectHitInfo[] hits, Direction weaponDirection);
     public delegate void OnSingleEffectRemoved(int playerId, EffectType type, int rank);
     public delegate void OnCollisionDetected(int launcherId, EffectType type, int nbPlayers, int rank, List<int> participants);
 
@@ -169,6 +172,7 @@ public class GameEngine
     {
         new EffectWeight { type = EffectType.Missile,       chance = 0.05f, value = 30, isWeapon = true },
         new EffectWeight { type = EffectType.Laser,       chance = 0.05f, value = 30, isWeapon = true },
+        new EffectWeight { type = EffectType.Spray,       chance = 0.05f, value = 20, isWeapon = true },
         new EffectWeight { type = EffectType.Poison,        chance = 0.05f, value = 10, isWeapon = false, duration = 4f },
         new EffectWeight { type = EffectType.Armor,         chance = 0.04f, value = 10, isWeapon = false, duration = 3f },
         new EffectWeight { type = EffectType.DamageBomb,    chance = 0.06f, value = 30, isWeapon = false },
@@ -182,6 +186,11 @@ public class GameEngine
 
     private CellEffect GenerateRandomCell(int row, int col)
     {
+        List<EffectWeight> activePool = possibleEffects
+            .OrderBy(x => _rng.Next())
+            .Take(8) 
+            .ToList();
+
         if (row == 0 || (row == 1 ))//&& !_currentState.HasDoneFirstTurn
         {
             return new CellEffect { type = EffectType.Neutral, value = 0, isWeapon = false };
@@ -190,9 +199,11 @@ public class GameEngine
         float chance = (float)_rng.NextDouble();
         float cumulative = 0f;
 
-        foreach (var effect in possibleEffects)
+        foreach (var effect in activePool)
         {
-            cumulative += effect.chance;
+            float dynamicChance = effect.chance * (float)(0.8 + _rng.NextDouble() * 0.4);
+            
+            cumulative += dynamicChance;
             if (chance < cumulative)
             {
                 return new CellEffect 
@@ -304,13 +315,13 @@ public class GameEngine
             foreach (int intruderId in allPlayersOnCell)
             {
                 // Trouver une case libre autour de la collision
-                Vector2Int newPos = FindBumpingPosition(duel.Row, duel.Col);
+                Position newPos = FindBumpingPosition(duel.Row, duel.Col);
                 
                 // Mettre à jour la logique du moteur TOUT DE SUITE
                 int pIdx = _currentState.Players.FindIndex(p => p.ID == intruderId);
                 var updatedIntruder = _currentState.Players[pIdx];
-                updatedIntruder.Row = newPos.x;
-                updatedIntruder.Col = newPos.y;
+                updatedIntruder.Row = newPos.Row;
+                updatedIntruder.Col = newPos.Col;
                 _currentState.Players[pIdx] = updatedIntruder;
                 
                 // L'intrus atterrira directement sur sa nouvelle case d'expulsion après le saut
@@ -328,9 +339,9 @@ public class GameEngine
                 else if (i == 1) offsetCol += 1;
 
                 if (offsetCol >= 0 && offsetCol < _currentState.Cols) {
-                    _currentState.PlayerFinalPositions[pId] = new Vector2Int(duel.Row, offsetCol);
+                    _currentState.PlayerFinalPositions[pId] = new Position(duel.Row, offsetCol);
                 } else {
-                    _currentState.PlayerFinalPositions[pId] = new Vector2Int(duel.Row, originalCol);
+                    _currentState.PlayerFinalPositions[pId] = new Position(duel.Row, originalCol);
                 }
             }
         }
@@ -388,7 +399,6 @@ public class GameEngine
                         executionRank++;
                         break;
                     case EffectType.Poison:
-
                         if (player.ArmorTurnsRemaining == 0)
                         {
                             player.Health = Math.Max(player.Health - cell.value, 0);
@@ -396,12 +406,17 @@ public class GameEngine
                             player.startPoison = true;
                             SingleEffectApplied?.Invoke(player.ID, EffectType.Poison, player.Row, executionRank, player.Health);
                         }
+                        executionRank++;
+                        break;
 
+                    case EffectType.Spray:
+                        // Logique du spray : toucher tous les joueurs sur la même ligne et colonne
+                        ResolveWeaponEffect(player.Row, player.ID, executionRank, EffectType.Spray, cell.value);
                         executionRank++;
                         break;
                     case EffectType.Missile:
                         // Logique du missile : toucher joueur le plus proche sur meme ligne
-                        ResolveMissileEffect(player.Row, player.ID, executionRank);
+                        ResolveWeaponEffect(player.Row, player.ID, executionRank, EffectType.Missile, cell.value);
                         executionRank++;
                         break;
                     case EffectType.Laser:
@@ -409,6 +424,7 @@ public class GameEngine
                         ResolveLaserEffect(player.Row, player.ID, executionRank);
                         executionRank++;
                         break;
+
                     case EffectType.Armor:
                         player.ArmorTurnsRemaining = (int)cell.duration;//= 2;
                         SingleEffectApplied?.Invoke(player.ID, EffectType.Armor, player.Row, executionRank, player.Health);
@@ -422,6 +438,10 @@ public class GameEngine
                         break;
                 }
 
+                if (player.Health <= 0)
+                {
+                    player.IsAlive = false;
+                }
                 // Mettre à jour le joueur dans l'état
                 _currentState.Players[i] = player;
 
@@ -512,91 +532,130 @@ public class GameEngine
                 EffectType.Laser,
                 targetRow,
                 executionRank,
-                hits.ToArray()
+                hits.ToArray(),
+                Direction.LeftAndRight
             );
         }
     }
+ 
 
     /// <summary>
-    /// Logique du missile : toucher tous les joueurs sur la même ligne
+    /// Logique du weapon : toucher tous les joueurs sur la même ligne ou sur une zone selon le weapon
     /// </summary>
-    private void ResolveMissileEffect(int targetRow, int launcherPlayerId, int executionRank)
+    private void ResolveWeaponEffect(int targetRow, int launcherPlayerId, int executionRank, EffectType weaponType, int damage = 30)
     {
         List<EffectHitInfo> hits = new List<EffectHitInfo>();
         var launcher = _currentState.Players.First(p => p.ID == launcherPlayerId);
-        int launcherCol = launcher.Col;
 
-        // Cherche le joueur le plus proche à GAUCHE
-        PlayerState closestLeft = default;
-        closestLeft.ID = -1;
-        int minLeftDist = int.MaxValue;
-        
-        // Cherche le joueur le plus proche à DROITE
-        PlayerState closestRight = default;
-        closestRight.ID = -1;
-        int minRightDist = int.MaxValue;
-
-        foreach (var player in _currentState.Players)
+        // 1. Récupérer TOUTES les victimes potentielles dans la zone
+        (List<PlayerState> victims, Direction weaponDirection) = GetPlayersInRange(launcherPlayerId, targetRow, launcher.Col, weaponType);
+ 
+        // 2. Appliquer les dégâts à la liste finale
+        foreach (var victim in victims)
         {
-            if (!player.IsAlive || player.Row != targetRow || player.ID == launcherPlayerId) continue;
-
-            int distance = Math.Abs(player.Col - launcherCol);
-            if (player.Col < launcherCol && distance < minLeftDist)
+            var v = victim; // Copie pour modification
+            if (v.ArmorTurnsRemaining > 0)
             {
-                minLeftDist = distance;
-                closestLeft = player;
+                v.ArmorTurnsRemaining--;
             }
-            else if (player.Col > launcherCol && distance < minRightDist)
+            else
             {
-                minRightDist = distance;
-                closestRight = player;
-            }
-        }
-
-        // Inflige des dégâts au plus proche à gauche
-        if (closestLeft.ID != -1)
-        {
-            if (closestLeft.ArmorTurnsRemaining == 0){
-                closestLeft.Health = Math.Max(closestLeft.Health - 30, 0);
-                int index = _currentState.Players.FindIndex(p => p.ID == closestLeft.ID);
-                _currentState.Players[index] = closestLeft;
-                hits.Add(new EffectHitInfo {
-                    PlayerId = closestLeft.ID,
-                    NewHealth = closestLeft.Health
-                });
-             } else {
-                closestLeft.ArmorTurnsRemaining--;
-            }
-        }
-
-        // Inflige des dégâts au plus proche à droite
-        if (closestRight.ID != -1)
-        {
-            if (closestRight.ArmorTurnsRemaining == 0) {
-                closestRight.Health = Math.Max(closestRight.Health - 30, 0);
-                int index = _currentState.Players.FindIndex(p => p.ID == closestRight.ID);
-                _currentState.Players[index] = closestRight;
-                hits.Add(new EffectHitInfo {
-                    PlayerId = closestRight.ID,
-                    NewHealth = closestRight.Health
-                });
-            } else {
-                closestRight.ArmorTurnsRemaining--;
-            }
+                v.Health = Math.Max(v.Health - damage, 0);
+                if (v.Health <= 0) v.IsAlive = false;
                 
+                hits.Add(new EffectHitInfo { PlayerId = v.ID, NewHealth = v.Health });
+            }
+            
+            // Sauvegarder dans le moteur
+            int idx = _currentState.Players.FindIndex(p => p.ID == v.ID);
+            _currentState.Players[idx] = v;
         }
-        if (MultiEffectApplied != null)
-        {
-            MultiEffectApplied.Invoke(
-                launcherPlayerId,
-                EffectType.Missile,
-                targetRow,
-                executionRank,
-                hits.ToArray()
-            );
-        }
+
+        // 4. Invoke l'événement pour Unity
+        MultiEffectApplied?.Invoke(
+            launcherPlayerId,
+            weaponType,
+            targetRow,
+            executionRank,
+            hits.ToArray(),
+            weaponDirection
+        );
     }
-    
+
+    private (List<PlayerState>, Direction) GetPlayersInRange(int launcherId, int centerRow, int centerCol, EffectType type)
+    {
+        // On récupère tous les ennemis vivants
+        List<PlayerState> enemies = _currentState.Players
+            .Where(p => p.IsAlive && p.ID != launcherId)
+            .ToList();
+
+        List<PlayerState> victims = new List<PlayerState>();
+        Direction weaponDirection = Direction.None;
+        var launcher = _currentState.Players.First(p => p.ID == launcherId);
+
+        switch (type)
+        {
+            case EffectType.Spray:
+                // 🟥 LOGIQUE ZONE : On prend TOUS les joueurs dans le carré 3x3
+                foreach (var p in enemies)
+                {
+                    if (Math.Abs(p.Row - centerRow) <= 1 && Math.Abs(p.Col - centerCol) <= 1)
+                    {
+                        victims.Add(p);
+                    }
+                    bool hasLeft = victims.Any(p => p.Col < launcher.Col);
+                    bool hasRight = victims.Any(p => p.Col > launcher.Col);
+                    
+                    if (hasLeft && hasRight) weaponDirection = Direction.LeftAndRight;
+                    else if (hasLeft) weaponDirection = Direction.Left;
+                    else if (hasRight) weaponDirection = Direction.Right;
+                    else weaponDirection = Direction.None; // Ou All si touché sur place (rare)
+                }
+                break;
+
+            case EffectType.Missile:
+                // 🚀 LOGIQUE PERCUSSION : Uniquement le plus proche à gauche et à droite (sur la même ligne)
+                int minLeftDist = int.MaxValue;
+                int minRightDist = int.MaxValue;
+                int? closestLeftId = null;
+                int? closestRightId = null;
+
+                foreach (var p in enemies)
+                {
+                    if (p.Row != centerRow) continue; // Doit être sur la même ligne
+
+                    int dist = Math.Abs(p.Col - centerCol);
+                    if (p.Col < centerCol && dist < minLeftDist) // Cible à gauche
+                    {
+                        minLeftDist = dist;
+                        closestLeftId = p.ID;
+                    }
+                    else if (p.Col > centerCol && dist < minRightDist) // Cible à droite
+                    {
+                        minRightDist = dist;
+                        closestRightId = p.ID;
+                    }
+                }
+                // On ajoute les deux élus (s'ils existent) à la liste des victimes
+                if (closestLeftId.HasValue) victims.Add(_currentState.Players.First(p => p.ID == closestLeftId.Value));
+                if (closestRightId.HasValue) victims.Add(_currentState.Players.First(p => p.ID == closestRightId.Value));
+
+                weaponDirection = Direction.LeftAndRight;
+                break;
+
+            case EffectType.Laser:
+                // 🟦 LOGIQUE LIGNE : Tout le monde sur la ligne, traverse tout
+                foreach (var p in enemies)
+                {
+                    if (p.Row == centerRow) victims.Add(p);
+                }
+                weaponDirection = Direction.LeftAndRight;
+                break;
+        }
+
+        return (victims, weaponDirection);
+    }
+
     public DuelResult ResolveDuelLogic(CollisionDuel duel, Dictionary<int, int> playerChoices)
     {
         // 1. Le Moteur "lance la pièce" (0 = Or, 1 = Argent)
@@ -640,26 +699,32 @@ public class GameEngine
         Console.WriteLine($"🏆 Gagnant du duel : Joueur {winnerId + 1} !");
 
         // 3. Calculer la position d'expulsion du perdant (Ton code existant)
-        Vector2Int expulsionPos = FindBumpingPosition(duel.Row, duel.Col);
+        Position expulsionPos = FindBumpingPosition(duel.Row, duel.Col);
 
         // 4. Mettre à jour la position du perdant dans le moteur (Ton code existant)
         int pIdx = _currentState.Players.FindIndex(p => p.ID == loserId);
         var updatedLoser = _currentState.Players[pIdx];
-        updatedLoser.Row = expulsionPos.x;
-        updatedLoser.Col = expulsionPos.y;
+        
+        updatedLoser.Health = Math.Max(updatedLoser.Health - 5, 0);
+        if (updatedLoser.Health <= 0) updatedLoser.IsAlive = false;
+
+        updatedLoser.Row = expulsionPos.Row;
+        updatedLoser.Col = expulsionPos.Col;
         _currentState.Players[pIdx] = updatedLoser;
 
         return new DuelResult { WinnerId = winnerId, LoserId = loserId, LoserNewPos = expulsionPos };
     }
     
-    private Vector2Int FindBumpingPosition(int r, int c)
+    private Position FindBumpingPosition(int r, int c)
     {
         // Liste des directions prioritaires (Gauche, Droite, Haut, Bas)
         int[] dr = { 0, 0, 1, -1 };
         int[] dc = { -1, 1, 0, 0 };
 
-        for (int i = 0; i < 4; i++)
-        {
+        List<int> indices = Enumerable.Range(0, 4).OrderBy(x => _rng.Next()).ToList();
+
+
+        foreach (int i in indices) {
             int nr = r + dr[i];
             int nc = c + dc[i];
 
@@ -669,13 +734,13 @@ public class GameEngine
                 // Vérifier si personne n'est sur cette case (simplifié)
                 if (!_currentState.Players.Any(p => p.IsAlive && p.Row == nr && p.Col == nc))
                 {
-                    return new Vector2Int(nr, nc);
+                    return new Position(nr, nc);
                 }
             }
         }
         
         // Si tout est bouché, on renvoie une case par défaut (Haut)
-        return new Vector2Int(r + 1, c);
+        return new Position(r + 1, c);
     }
 
     #endregion

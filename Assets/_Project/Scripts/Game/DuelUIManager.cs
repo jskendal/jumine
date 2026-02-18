@@ -23,8 +23,8 @@ public class DuelUIManager : MonoBehaviour
         duelPanel.SetActive(false);
         
         // 0 = Or, 1 = Argent
-        goldButton.onClick.AddListener(() => MakeChoice(0));
-        silverButton.onClick.AddListener(() => MakeChoice(1));
+        // goldButton.onClick.AddListener(() => MakeChoice(0));
+        // silverButton.onClick.AddListener(() => MakeChoice(1));
     }
 
     public void StartDuel(Action<int> callback)
@@ -32,6 +32,11 @@ public class DuelUIManager : MonoBehaviour
         onChoiceCallback = callback;
         hasChosen = false;
         
+        goldButton.gameObject.SetActive(true);
+        silverButton.gameObject.SetActive(true);
+        goldButton.interactable = true;
+        silverButton.interactable = true;
+
         duelPanel.SetActive(true);
         StartCoroutine(RotateCoinWhileWaiting());
         goldButton.gameObject.SetActive(true);
@@ -52,16 +57,47 @@ public class DuelUIManager : MonoBehaviour
         }
     }
 
-    void MakeChoice(int choice)
+    public void MakeChoice(int choice)
     {
         if (hasChosen) return;
         hasChosen = true;
+
+        // 1. Désactiver l'autre bouton
+        goldButton.interactable = false;
+        silverButton.interactable = false;
+
+        // 2. Feedback Visuel : Faire bouncer le bouton choisi
+        Button selectedBtn = (choice == 0) ? goldButton : silverButton;
+        Button otherBtn = (choice == 0) ? silverButton : goldButton;
         
-        // On cache les boutons dès qu'on a cliqué
-        goldButton.gameObject.SetActive(false);
-        silverButton.gameObject.SetActive(false);
+        otherBtn.gameObject.SetActive(false); // On cache l'autre
         
+        StartCoroutine(AnimateAndConfirm(selectedBtn.transform, choice));
+    }
+
+    IEnumerator AnimateAndConfirm(Transform btnTransform, int choice)
+    {
+        // Ton animation de bounce
+        yield return StartCoroutine(BounceUI(btnTransform));
+        
+        // Une fois l'anim finie, on valide le choix
         onChoiceCallback?.Invoke(choice);
+    }
+
+    IEnumerator BounceUI(Transform tr)
+    {
+        float t = 0;
+        Vector3 startScale = tr.localScale;
+        while (t < 0.2f) {
+            tr.localScale = Vector3.Lerp(startScale, startScale * 1.2f, t / 0.1f);
+            t += Time.deltaTime;
+            yield return null;
+        }
+        while (t < 0.4f) {
+            tr.localScale = Vector3.Lerp(startScale * 1.2f, startScale, (t - 0.2f) / 0.1f);
+            t += Time.deltaTime;
+            yield return null;
+        }
     }
 
     IEnumerator CountdownRoutine()

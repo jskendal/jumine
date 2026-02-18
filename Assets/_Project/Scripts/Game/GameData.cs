@@ -1,5 +1,3 @@
-// GameData.cs
-using UnityEngine;
 
 // public enum EffectType
 // {
@@ -11,6 +9,8 @@ using UnityEngine;
 //     Freeze,          // Status : Ne bouge pas
 //     SpeedBoost       // Status : Bouge plus vite
 // }
+
+using System.Collections.Generic;
 
 [System.Serializable]
 public struct CellEffect
@@ -37,3 +37,28 @@ public struct EffectHitInfo
 }
 
 public enum ControlMode { Human, AI, Remote }
+
+public struct Position
+{
+    public int Row;
+    public int Col;
+
+    public Position(int r, int c)
+    {
+        Row = r;
+        Col = c;
+    }
+}
+
+public struct GameEventData
+{
+    public EffectType Type;           // Ton enum direct
+    public int Rank;                  // Ordre d'animation
+    public int PlayerId;              // Qui subit l'effet
+    public int LauncherId;            // Qui lance (pour armes/duels)
+    public int Row;                   // Où ça se passe
+    public int NewHealth;             // PV après effet
+    public Direction WeaponDirection; // Ta enum direct
+    public EffectHitInfo[]? Hits;     // Cibles touchées (peut être null)
+    public List<int>? Participants;   // Joueurs dans un duel
+}

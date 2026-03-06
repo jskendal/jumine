@@ -85,34 +85,42 @@ public class Cell : MonoBehaviour
     {
         if (gridManager == null) return;
         
-        // Vérifie DIRECTEMENT dans GridManager si cette cellule est sélectionnable
         if (gridManager.IsCellSelectable(row, col))
         {
-                   // Désélectionner l'ancienne cellule visuellement
+            GameManager gm = FindObjectOfType<GameManager>();
+            Vector2Int currentTarget = gm.playerTargets[gm.localPlayerID];
+
+            // 1. CAS : On clique sur la cellule DÉJÀ sélectionnée (On veut annuler)
+            if (currentTarget.x == row && currentTarget.y == col)
+            {
+                Deselect(); // Enlève le visuel jaune
+
+                // Remettre la cible sur la position actuelle (jump sur place)
+                // ⚠️ Assure-toi que GetPlayerCurrentCell est 'public' dans GameManager !
+                Vector2Int currentPos = gm.GetPlayerCurrentCell(gm.localPlayerID);
+                gm.SetPlayerTarget(gm.localPlayerID, currentPos.x, currentPos.y);
+                
+                return; // On arrête là, on a désélectionné
+            }
+
+            // 2. CAS : On clique sur une NOUVELLE cellule
             GameObject oldSelectedBorder = GameObject.FindWithTag("SelectedBorder");
             if (oldSelectedBorder != null)
             {
-                // On enlève le tag pour ne plus la considérer comme "sélectionnée"
                 oldSelectedBorder.tag = "Untagged";
-                
-                // On la remet en cyan
+                // 🔥 LE FIX DU NOM EST ICI 🔥
+                oldSelectedBorder.name = oldSelectedBorder.name.Replace("Selected", "Selectable");
                 oldSelectedBorder.GetComponent<Renderer>().material.color = new Color(0, 1, 1, 0.3f);
-        
             }
 
             // Enregistrer la cible dans GameManager
-            GameManager gm = FindObjectOfType<GameManager>();
-            gm.SetPlayerTarget(gm.localPlayerID, row, col); // Joueur 0 = humain
+            gm.SetPlayerTarget(gm.localPlayerID, row, col);
 
-            // Sélectionner visuellement la nouvelle cellule
+            // Sélectionner visuellement
             Select();
         }
-        else
-        {
-            Debug.Log($"Cellule ({row},{col}) NON sélectionnable - ignoré");
-            // RIEN
-        }
     }
+
     
     public void Select()
     {
@@ -132,8 +140,8 @@ public class Cell : MonoBehaviour
         if (border != null)
         {
             border.name = $"Border_Selectable_{row}_{col}";
-            Renderer renderer = border.GetComponent<Renderer>();
-            renderer.material.color = new Color(0, 1, 1, 0.3f); // Cyan
+            border.tag = "Untagged"; // 🔥 SUPER IMPORTANT sinon il reste taggué "SelectedBorder"
+            border.GetComponent<Renderer>().material.color = new Color(0, 1, 1, 0.3f); // Cyan
         }
     }
 }

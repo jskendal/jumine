@@ -79,6 +79,7 @@ public class GameState
 
 public struct CollisionDuel
 {
+    public int DuelId;
     public int Row;
     public int Col;
     public List<int> PlayerIDs; // Les IDs des 2, 3 ou 4 joueurs sur cette case
@@ -135,26 +136,26 @@ public class GameEngine
     /// <summary>
     /// Exécute un tour complet : mouvements, insertion de ligne, résolution des effets
     /// </summary>
-    public void ProcessTurn(List<PlayerAction> playerActions)
-    {
-        // 1. Appliquer les mouvements des joueurs
-        ApplyPlayerMoves(playerActions);
+    // public void ProcessTurn(List<PlayerAction> playerActions)
+    // {
+    //     // 1. Appliquer les mouvements des joueurs
+    //     ApplyPlayerMoves(playerActions);
 
-        // 1.1 
-        DetectCollisions();
+    //     // 1.1 
+    //     DetectCollisions();
 
-        // 2. Faire descendre la grille (logique InsertRow)
-        InsertNewRow();
+    //     // 2. Faire descendre la grille (logique InsertRow)
+    //     InsertNewRow();
 
-        // 3. Résoudre les effets des cases où les joueurs ont atterri
-        ResolveCellEffects();
+    //     // 3. Résoudre les effets des cases où les joueurs ont atterri
+    //     ResolveCellEffects();
 
-        // 4. Résoudre les effets persistants (poison, armor)
-        ResolvePersistentEffects();
+    //     // 4. Résoudre les effets persistants (poison, armor)
+    //     ResolvePersistentEffects();
 
-        // 5. Incrémenter le tour
-        _currentState.CurrentTurn++;
-    }
+    //     // 5. Incrémenter le tour
+    //     _currentState.CurrentTurn++;
+    // }
 
     #region MÉTHODES DE LOGIQUE
     private void GenerateInitialGrid()

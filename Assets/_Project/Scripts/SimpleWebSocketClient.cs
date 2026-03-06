@@ -17,7 +17,7 @@ public class SimpleWebSocketClient : MonoBehaviour
 
     void Start()
     {
-        //Connect();
+        Connect();
     }
 
     async void Connect()
@@ -32,8 +32,19 @@ public class SimpleWebSocketClient : MonoBehaviour
             _isConnected = true;
             Debug.Log("✅ CONNECTÉ AU SERVEUR !");
 
-            // Envoyer un message de join
-            await Send("{\"op\":\"join\"}");
+            bool[] isAIConfig = new bool[4];
+            for (int i = 0; i < 4; i++)
+            {
+                isAIConfig[i] = gameManager.playerControlModes[i] == ControlMode.AI;
+            }
+ 
+            string json = Newtonsoft.Json.JsonConvert.SerializeObject(new {
+                op = "join",
+                aiConfig = isAIConfig
+            });
+
+            // Envoyer via WebSocket
+            await Send(json);
 
             // Lancer la boucle de réception
             _ = ReceiveLoop();
@@ -44,7 +55,7 @@ public class SimpleWebSocketClient : MonoBehaviour
         }
     }
 
-   async Task ReceiveLoop()
+    async Task ReceiveLoop()
     {
         var buffer = new byte[1024 * 4];
 

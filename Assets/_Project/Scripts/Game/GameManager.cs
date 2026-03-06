@@ -12,7 +12,9 @@ public class GameManager : MonoBehaviour
     public GridManager gridManager;
     public GameObject playerPrefab;
     public SimpleWebSocketClient networkClient;        
-        
+    public bool _gameStartReceived = false; 
+    private GameState _lastServerState;
+    private bool isDuelInProgress = false;
 
     [Header("Paramètres")]
     public float timeBetweenRows = 5f;
@@ -47,14 +49,14 @@ public class GameManager : MonoBehaviour
     
     private bool hasDoneSpawnPlayers = false;
 
-    private Vector2Int[] playerTargets = new Vector2Int[4];
+    public Vector2Int[] playerTargets = new Vector2Int[4];
 
     [Header("Contrôle Joueurs")]
     public int localPlayerID = 1; 
     public ControlMode[] playerControlModes = new ControlMode[4] { ControlMode.AI, ControlMode.Human, ControlMode.AI, ControlMode.AI };
     
     private GameEngine engine; // Le moteur de jeu
-    private List<PlayerAction> currentTurnActions = new List<PlayerAction>();
+    public List<PlayerAction> currentTurnActions = new List<PlayerAction>();
     private int[] playerCols = new int[] { 2, 7, 12, 17 }; 
 
     private Queue<EffectEvent> effectQueue = new Queue<EffectEvent>();
@@ -79,68 +81,68 @@ public class GameManager : MonoBehaviour
     void Start()
     {
         // Initialiser le moteur de jeu
-        engine = new GameEngine(gridManager.rows, gridManager.columns);
+        //engine = new GameEngine(gridManager.rows, gridManager.columns);
 
         // Ajouter les 4 joueurs au moteur
-        for(int i=0; i<4; i++)
-        {
-            engine.AddPlayer(new PlayerState
-            {
-                ID = i,
-                Health = 100,
-                MaxHealth = 100,
-                Row = 0,
-                Col = playerCols[i],
-                IsAlive = true
-            });
-        }
+        // for(int i=0; i<4; i++)
+        // {
+        //     engine.AddPlayer(new PlayerState
+        //     {
+        //         ID = i,
+        //         Health = 100,
+        //         MaxHealth = 100,
+        //         Row = 0,
+        //         Col = playerCols[i],
+        //         IsAlive = true
+        //     });
+        // }
 
         StartCoroutine(StartGameAfterGridReady());
 
         InitializeHealthUI();
 
-        engine.SingleEffectApplied += (playerId, type, row, rank, newHealth) =>
-        {
-            effectQueue.Enqueue(new EffectEvent {
-                playerId = playerId,
-                effectType = type,
-                value = row,
-                rank = rank,
-                hits = null,
-                newHealth = newHealth
-            });
-        };
-        engine.MultiEffectApplied += (launcherId, type, row, rank, hits, direction) => 
-        {
-            effectQueue.Enqueue(new EffectEvent {
-                playerId = launcherId,
-                effectType = type,
-                value = row, 
-                rank = rank,
-                hits = hits,
-                weaponDirection = direction
-            });
-            // if (!isProcessingEffects && !areJumpsInProgress)
-            //     StartCoroutine(ProcessEffectQueue());
-        };
-        engine.SingleEffectRemoved += (playerId, type, rank) =>
-        {
-            removeEffectQueue.Enqueue(new EffectEvent {
-                playerId = playerId,
-                effectType = type,
-                rank = rank
-            });
-        };
-        engine.CollisionDetected += (launcherId, type, nbPlayers, rank, participants) => 
-        {
-            effectQueue.Enqueue(new EffectEvent {
-                playerId = launcherId,
-                effectType = type,
-                value = nbPlayers, // On utilise value pour stocker le nombre de joueurs
-                rank = rank,
-                participants = participants // On transmet la liste des IDs
-            });
-        };
+        // engine.SingleEffectApplied += (playerId, type, row, rank, newHealth) =>
+        // {
+        //     effectQueue.Enqueue(new EffectEvent {
+        //         playerId = playerId,
+        //         effectType = type,
+        //         value = row,
+        //         rank = rank,
+        //         hits = null,
+        //         newHealth = newHealth
+        //     });
+        // };
+        // engine.MultiEffectApplied += (launcherId, type, row, rank, hits, direction) => 
+        // {
+        //     effectQueue.Enqueue(new EffectEvent {
+        //         playerId = launcherId,
+        //         effectType = type,
+        //         value = row, 
+        //         rank = rank,
+        //         hits = hits,
+        //         weaponDirection = direction
+        //     });
+        //     // if (!isProcessingEffects && !areJumpsInProgress)
+        //     //     StartCoroutine(ProcessEffectQueue());
+        // };
+        // engine.SingleEffectRemoved += (playerId, type, rank) =>
+        // {
+        //     removeEffectQueue.Enqueue(new EffectEvent {
+        //         playerId = playerId,
+        //         effectType = type,
+        //         rank = rank
+        //     });
+        // };
+        // engine.CollisionDetected += (launcherId, type, nbPlayers, rank, participants) => 
+        // {
+        //     effectQueue.Enqueue(new EffectEvent {
+        //         playerId = launcherId,
+        //         effectType = type,
+        //         value = nbPlayers, // On utilise value pour stocker le nombre de joueurs
+        //         rank = rank,
+        //         participants = participants // On transmet la liste des IDs
+        //     });
+        // };
     }
     
         // ═══════════════════════════════════════════
@@ -217,7 +219,7 @@ public class GameManager : MonoBehaviour
         //StartSelectionPhase();
     }
 
-    IEnumerator OnEffectAppliedCoroutine(int playerId, int launcherPlayerId, EffectType effectType, 
+    public IEnumerator OnEffectAppliedCoroutine(int playerId, int launcherPlayerId, EffectType effectType, 
                                             int value, int rank, EffectHitInfo[] hits, int newHealth, Direction weaponDirection = Direction.None, List<int> participants = null)
     {
          // 🔥 Le secret : chaque animation attend son tour
@@ -333,7 +335,7 @@ public class GameManager : MonoBehaviour
 
             case EffectType.Missile:
                 int mRow = value;
-                int launcherCol = engine.GetCurrentState().Players[playerId].Col;
+                int launcherCol = _lastServerState.Players[playerId].Col;
                 float startX = playerObj.transform.position.x;
 
                 // --- Trouver les X d'arrêt pour le visuel ---
@@ -341,7 +343,7 @@ public class GameManager : MonoBehaviour
                 float stopXLeft = gridManager.GetCellWorldPosition(mRow, 0).x;
 
                 // On cherche les cibles réelles dans le GameState pour arrêter les missiles dessus
-                foreach (var p in engine.GetCurrentState().Players)
+                foreach (var p in _lastServerState.Players)
                 {
                     if (p.ID == playerId || !p.IsAlive || p.Row != mRow) continue;
 
@@ -456,15 +458,16 @@ public class GameManager : MonoBehaviour
 
             case EffectType.CollisionDuel:
                  Debug.Log($"⚔️ Duel Visuel lancé ! Participants: {string.Join(", ", participants)}");
-            
+                if (isDuelInProgress) yield break; // Évite les doublons
+                isDuelInProgress = true;
                 // 1. AFFICHER LA PIÈCE QUI TOURNE
                 GameObject coinFX = GameObject.CreatePrimitive(PrimitiveType.Sphere); // Ou un modèle 3D de pièce
                 coinFX.name = "DuelCoin_FX";
 
                 // Positionne la pièce au-dessus du centre de la case
                 Vector3 duelCellPos = gridManager.GetCellWorldPosition(
-                    engine.GetCurrentState().Players.First(p => p.ID == playerId).Row, // Position logique du joueur
-                    engine.GetCurrentState().Players.First(p => p.ID == playerId).Col
+                    _lastServerState.Players.First(p => p.ID == playerId).Row, // Position logique du joueur
+                    _lastServerState.Players.First(p => p.ID == playerId).Col
                 );
                 // On la place au-dessus des joueurs et on la met debout (rotation sur X)
                 coinFX.transform.position = duelCellPos + Vector3.up * 1.8f;
@@ -475,46 +478,73 @@ public class GameManager : MonoBehaviour
                 // Simple animation de rotation
                 StartCoroutine(RotateCoin(coinFX.transform));
 
+                var duel = _lastServerState.CurrentDuels.First(d => d.PlayerIDs.Contains(playerId));
                 bool isHumanInvolved = participants.Contains(localPlayerID) && playerControlModes[localPlayerID] == ControlMode.Human;
                 Dictionary<int, int> duelChoices = new Dictionary<int, int>();
 
                 // 2. DÉCLENCHER LA POPUP UI (Si le joueur est humain et participant)
-                // (Ceci sera une nouvelle coroutine ou une fonction qui gère l'UI)
-                if (participants.Contains(localPlayerID) && playerControlModes[localPlayerID] == ControlMode.Human)
+                if (isHumanInvolved)
                 {
                     int humanChoice = 0; // 0 = Or, 1 = Argent
                     bool choiceDone = false;
                     Debug.Log($"Popup Flip Coin pour Joueur {localPlayerID + 1}");
-                    DuelUIManager.Instance.StartDuel((choice) =>
+                    DuelUIManager.Instance.StartDuel(async (choice) =>
                             {
                                 humanChoice = choice;
                                 duelChoices.Add(localPlayerID, humanChoice);
                                 choiceDone = true;
+
+                                // Assigner le choix inverse à l'autre joueur (l'IA)
+                                int otherPlayerId = participants.First(p => p != localPlayerID);
+                                duelChoices.Add(otherPlayerId, humanChoice == 0 ? 1 : 0);
+                    
+                                 // Envoyer le choix au serveur
+                                string json = Newtonsoft.Json.JsonConvert.SerializeObject(new {
+                                    op = "duel_choice",
+                                    duelId = duel.DuelId, // Tu peux utiliser l'index du duel ou un ID serveur
+                                    playerId = localPlayerID,
+                                    duelChoices = duelChoices
+                                });
+                                await networkClient.Send(json);
                             });
 
                     while (!choiceDone) yield return null;
 
-                    // Assigner le choix inverse à l'autre joueur (l'IA)
-                    int otherPlayerId = participants.First(p => p != localPlayerID);
-                    duelChoices.Add(otherPlayerId, humanChoice == 0 ? 1 : 0);
-                }
 
-                if (!isHumanInvolved)
+                }
+                else
                 {
                     duelChoices.Add(participants[0], 0);
                     duelChoices.Add(participants[1], 1);
-                    
-                    // Petite pause pour simuler la tension du duel
-                    yield return new WaitForSeconds(2.0f); 
+                    string json = Newtonsoft.Json.JsonConvert.SerializeObject(new
+                    {
+                        op = "duel_choice",
+                        duelId = duel.DuelId, // Tu peux utiliser l'index du duel ou un ID serveur
+                        playerId = playerId,
+                        duelChoices = duelChoices
+                    });
+                    yield return new WaitForSeconds(1.5f);
+                    networkClient.Send(json);
                 }
-                
+
+                //si outJsonAIDuel exist, alors faudrait call une async fct 
+                //OnServerMessage(string json)
+
+                // if (!isHumanInvolved)
+                // {
+                //     duelChoices.Add(participants[0], 0);
+                //     duelChoices.Add(participants[1], 1);
+
+                //     // Petite pause pour simuler la tension du duel
+                //     yield return new WaitForSeconds(2.0f); 
+                // }
+
                 //yield return new WaitForSeconds(5.0f); // Simule le temps du choix du joueur + flip
 
                 // 4. NETTOYER L'ANIMATION DE LA PIÈCE
                 Destroy(coinFX);
  
-                yield return StartCoroutine(ResolveDuel(playerId, duelChoices, participants));
-
+                //yield return StartCoroutine(ResolveDuel(playerId, duelChoices, participants));
                 break;
         }
     }
@@ -546,79 +576,53 @@ public class GameManager : MonoBehaviour
         Destroy(p);
     }
  
-    IEnumerator ResolveDuel(int playerId, Dictionary<int, int> duelChoices, List<int> participants)
-    {
-        // 1. Demander au moteur de résoudre le duel
-        var duelData = engine.GetCurrentState().CurrentDuels.First(d => d.PlayerIDs.Contains(playerId));
-        var result = engine.ResolveDuelLogic(duelData, duelChoices);
-        bool goldWins;
+    IEnumerator ResolveDuelAnimation(int winnerId, int loserId, Position loserNewPos)
+    { 
+        // 1. Récupérer les GameObjects des joueurs
+        GameObject winnerObj = players[winnerId];
+        GameObject loserObj = players[loserId];
 
-        if (participants.Contains(localPlayerID))
-        {
-            // Si je suis impliqué
-            int myChoice = duelChoices[localPlayerID]; // 0=Or, 1=Argent
+        // 2. Récupérer la position de la cellule de duel depuis l'état serveur
+        var duelCell = _lastServerState.Players.First(p => p.ID == winnerId);
+        Vector3 duelCellPos = gridManager.GetCellWorldPosition(duelCell.Row, duelCell.Col);
 
-            if (result.WinnerId == localPlayerID)
-            {
-                // J'ai gagné -> La pièce montre mon choix
-                goldWins = myChoice == 0;
-            }
-            else
-            {
-                // J'ai perdu -> La pièce montre le choix de l'adversaire (l'inverse du mien)
-                goldWins = myChoice != 0;
-            }
-        }
-        else
-        {
-            goldWins = true;
-        }
-        if (participants.Contains(localPlayerID) && playerControlModes[localPlayerID] == ControlMode.Human)
-        {
-            yield return StartCoroutine(DuelUIManager.Instance.SpinCoinAndClose(goldWins));
-        }
-        GameObject winnerObj = players[result.WinnerId];
-        GameObject loserObj = players[result.LoserId];
-
-        // A. Le gagnant se replace au centre de la case
-        Vector3 cellCenter = gridManager.GetCellWorldPosition(duelData.Row, duelData.Col);
-
-        // Le gagnant saute
+        // 3. Animation du gagnant : reste au centre
         float jumpWinDuration = 0.4f;
-        float timerJ = 0f;
+        float timer = 0f;
         Vector3 startWinPos = winnerObj.transform.position;
 
-        while (timerJ < jumpWinDuration)
+        while (timer < jumpWinDuration)
         {
-            timerJ += Time.deltaTime;
-            float progress = timerJ / jumpWinDuration;
-            // Lerp vers le centre + courbe en cloche
-            Vector3 currentPos = Vector3.Lerp(startWinPos, cellCenter, progress);
-            float height = Mathf.Sin(progress * Mathf.PI) * 1.5f; // Saut bien visible
+            timer += Time.deltaTime;
+            float progress = timer / jumpWinDuration;
+            Vector3 currentPos = Vector3.Lerp(startWinPos, duelCellPos, progress);
+            float height = Mathf.Sin(progress * Mathf.PI) * 1.5f;
             winnerObj.transform.position = new Vector3(currentPos.x, startWinPos.y + height, currentPos.z);
             yield return null;
         }
-        winnerObj.transform.position = cellCenter;
+        winnerObj.transform.position = duelCellPos;
 
-        // 🔊 Ici tu pourrais jouer un son "Boom" ou "Impact"
-
-
-        // B. Le perdant est "poussé" (Glissade)
-        Vector3 expulsionWorldPos = gridManager.GetCellWorldPosition(result.LoserNewPos.Row, result.LoserNewPos.Col);
-
+        // 4. Animation du perdant : expulsion
+        Vector3 expulsionWorldPos = gridManager.GetCellWorldPosition(loserNewPos.Row, loserNewPos.Col);
         float slideDuration = 0.3f;
-        float t = 0;
+        float t = 0f;
         Vector3 startPos = loserObj.transform.position;
+
         while (t < 1f)
         {
             t += Time.deltaTime / slideDuration;
             loserObj.transform.position = Vector3.Lerp(startPos, expulsionWorldPos, t);
             yield return null;
         }
-        
-        engine.ResolveCellEffects(participants); // 🔥 C'est ici que le moteur applique les effets liés au duel (ex: dégâts, gel, etc.) et met à jour les états des joueurs
 
+        // 5. Appliquer les effets post-duel (dégâts, etc.)
+        // Les effets sont déjà dans _lastServerState, tu peux relancer ProcessEffectQueue si besoin
+        // if (effectQueue.Count > 0)
+        // {
+        //     yield return StartCoroutine(ProcessEffectQueue());
+        // }
     }
+
 
     IEnumerator OnEffectRemoved(int playerId, EffectType effectType, int rank)
     {
@@ -748,18 +752,10 @@ public class GameManager : MonoBehaviour
 
     IEnumerator StartGameAfterGridReady()
     {
-        // 1. On attend que les références soient là
         while (gridManager == null) yield return null;
 
-        // 2. On récupère l'état initial du moteur
-        GameState initialState = engine.GetCurrentState();
-
-        // 3. On demande à GridManager de créer la grille à partir de cet état
-        gridManager.GenerateGrid(initialState);
-        gridManager.CenterGrid();
-        gridManager.GenerateFutureRow(initialState.FutureRow);
-
-        yield return null;
+        // Attendre le game_start du serveur
+        while (!_gameStartReceived) yield return null;
 
         ForceCameraPosition();
         SpawnPlayers();
@@ -813,7 +809,6 @@ public class GameManager : MonoBehaviour
     {
         isSelectionPhase = true;
         selectionTimer = selectionTime;
-        List<int> playersToUnfreeze = new List<int>();
         if(state != null)
         {
             foreach (var pState in state.Players)
@@ -823,16 +818,6 @@ public class GameManager : MonoBehaviour
                     Vector2Int current = GetPlayerCurrentCell(pState.ID);
                     playerTargets[pState.ID] = current; // Par défaut: rester sur place
                 }
-                //todo fct remove Freezed effect
-                if (pState.isFrozen == 1 && pState.FreezeTurnsRemaining == 0)
-                {
-                    playersToUnfreeze.Add(pState.ID);
-                }
-            }
-            foreach (int playerId in playersToUnfreeze)
-            {
-                engine.ClearFreezeEffect(playerId);
-                StartCoroutine(OnEffectRemoved(playerId, EffectType.Freeze, 0));
             }
         }
 
@@ -882,7 +867,7 @@ public class GameManager : MonoBehaviour
     {
         Vector2Int playerCell = gridManager.GetCellFromWorldPosition(player.transform.position);
         Debug.Log($"ShowCellsAroundPlayer: joueur en ({playerCell.x},{playerCell.y})");
-        List<Vector2Int> selectableCells = gridManager.GetCellsInRadius(playerCell, 2);
+        List<Vector2Int> selectableCells = gridManager.GetCellsInRadius(playerCell, 3);
         
         foreach (var cell in selectableCells)
         {
@@ -930,7 +915,7 @@ public class GameManager : MonoBehaviour
         if (timerText != null)
             timerText.text = $"CHOISISSEZ ! {Mathf.Max(0, selectionTimer):F1}s";
         
-        if (timerSlider != null)
+        if (timerSlider != null && !isDuelInProgress)
                 timerSlider.value = selectionTimer / selectionTime;
 
         //if (selectionTimer <= 0) EndSelectionPhase();
@@ -939,6 +924,10 @@ public class GameManager : MonoBehaviour
             // Sécurité supplémentaire: vérifier que la grille est prête
             if (!gridManager.IsGridReady()) return;
 
+            while (isDuelInProgress)
+            {
+                return;
+            }
             EndSelectionPhase();
         }
     }
@@ -947,7 +936,7 @@ public class GameManager : MonoBehaviour
     void EndSelectionPhase()
     {
         isSelectionPhase = false;
-        GameState state = engine.GetCurrentState();
+        GameState state = _lastServerState;
         
         // 1. IA : Demander aux IA de remplir leurs PlayerActions
         for (int i = 0; i < players.Length; i++)
@@ -963,33 +952,41 @@ public class GameManager : MonoBehaviour
 
          // 2. EXÉCUTER LA LOGIQUE DANS LE MOTEUR
         // C'est ici que le "cerveau" travaille
-        engine.ProcessTurn(currentTurnActions);
+        //engine.ProcessTurn(currentTurnActions);////    // X XXXXXXXXXXXXXXXX ✅// ✅// ✅ // ✅// ✅// ✅
 
-        // ✅// ✅// ✅
-        //SendActionsToServer(currentTurnActions);
-        // ✅// ✅// ✅
+            // ✅ // ✅// ✅// ✅// ✅ // ✅// ✅// ✅// ✅ // ✅// ✅// ✅
+            if(currentTurnActions.Count > 0)
+            {
+                SendActionsToServer(currentTurnActions);
+            }
+
+            // ✅ // ✅// ✅// ✅// ✅ // ✅// ✅// ✅// ✅ // ✅// ✅// ✅
 
         currentTurnActions.Clear(); // On vide pour le prochain tour
  
         // 4. DEMANDER À UNITY D'ANIMER LE RÉSULTAT
         // On utilise les données du moteur pour dire à Unity quoi faire
-        // ✅// ✅// ✅ 
-        StartCoroutine(SyncUnityWithEngine(state));
-        
-               // 1. Récupérer la ligne du haut depuis le moteur
-            // CellEffect[] topRowData = new CellEffect[state.Cols];
-            // for(int c=0; c < state.Cols; c++) {
-            //     topRowData[c] = state.Grid[state.Rows - 1, c];
-            // }
+ 
+        //StartCoroutine(SyncUnityWithEngine(state));// X XXXXXXXXXXXXXXXX ✅// ✅// ✅ // ✅// ✅// ✅
 
-            // CellEffect[] newFutureRowData = state.FutureRow;
-            // if (newFutureRowData == null || newFutureRowData.Length != state.Cols)
-            // {
-            //     Debug.LogWarning("Le moteur n'a pas fourni de FutureRow valide. Utilisation d'un tableau vide.");
-            //     newFutureRowData = new CellEffect[state.Cols]; // Tableau vide par défaut
+            // ✅ // ✅// ✅// ✅// ✅ // ✅// ✅// ✅// ✅ // ✅// ✅// ✅
+               // 1. Récupérer la ligne du haut depuis le moteur
+            // if(!hasDoneSpawnPlayers ) {
+            //     CellEffect[] topRowData = new CellEffect[state.Cols];
+            //     for(int c=0; c < state.Cols; c++) {
+            //         topRowData[c] = state.Grid[state.Rows - 1, c];
+            //     }
+
+            //     CellEffect[] newFutureRowData = state.FutureRow;
+            //     if (newFutureRowData == null || newFutureRowData.Length != state.Cols)
+            //     {
+            //         Debug.LogWarning("Le moteur n'a pas fourni de FutureRow valide. Utilisation d'un tableau vide.");
+            //         newFutureRowData = new CellEffect[state.Cols]; // Tableau vide par défaut
+            //     }
+            //     // 2. Passer cette ligne à Unity
+            //     gridManager.InsertRow(topRowData, newFutureRowData);
             // }
-            // // 2. Passer cette ligne à Unity
-            // gridManager.InsertRow(topRowData, newFutureRowData);
+                // ✅ // ✅// ✅// ✅// ✅ // ✅// ✅// ✅// ✅ // ✅// ✅// ✅
     }
     
     // ✅ // ✅// ✅// ✅// ✅ // ✅// ✅// ✅// ✅ // ✅// ✅// ✅
@@ -1010,7 +1007,7 @@ public class GameManager : MonoBehaviour
 
         string json = Newtonsoft.Json.JsonConvert.SerializeObject(new {
             op = "submit_actions",
-            turn = engine.GetCurrentState().CurrentTurn + 1,
+            turn = _lastServerState == null ? 1 : _lastServerState.CurrentTurn + 1,
             actions = actionList
         });
 
@@ -1022,18 +1019,7 @@ public class GameManager : MonoBehaviour
     }
 
     // ✅ // ✅// ✅// ✅
-    private async void SendActionsToServerTest2(List<PlayerAction> actions)
-    {
-        // On envoie juste les actions, pas besoin de dictionnaire complexe
-        string json = Newtonsoft.Json.JsonConvert.SerializeObject(new {
-            op = "submit_actions",
-            turn = engine.GetCurrentState().CurrentTurn + 1,
-            actions = actions  // La liste directe de PlayerAction
-        });
-
-        await networkClient.Send(json);
-        Debug.Log($"[Réseau] Actions envoyées au serveur: {json}");
-    }
+   
 
     public void OnServerMessage(string json)
     {
@@ -1041,7 +1027,42 @@ public class GameManager : MonoBehaviour
         
         // Ici tu parseras le JSON plus tard
         // Pour l'instant, on teste juste la réception
-        if (json.Contains("turn_result"))
+        if (json.Contains("game_start"))
+        {
+            var root = Newtonsoft.Json.Linq.JObject.Parse(json);
+            GameState initialState = Newtonsoft.Json.JsonConvert.DeserializeObject<GameState>(
+                root["state"].ToString()
+            );
+
+            // Générer la grille Unity à partir de serverState
+            gridManager.GenerateGrid(initialState);
+            gridManager.CenterGrid();
+            gridManager.GenerateFutureRow(initialState.FutureRow);
+
+            foreach (var pState in initialState.Players)
+                playerTargets[pState.ID] = new Vector2Int(pState.Row, pState.Col);
+
+            _gameStartReceived = true; // Débloquer StartGameAfterGridReady
+            _lastServerState = initialState;
+
+            
+            // if(!hasDoneSpawnPlayers ) {
+            //     CellEffect[] topRowData = new CellEffect[_lastServerState.Cols];
+            //     for(int c=0; c < _lastServerState.Cols; c++) {
+            //         topRowData[c] = _lastServerState.Grid[_lastServerState.Rows - 1, c];
+            //     }
+
+            //     CellEffect[] newFutureRowData = _lastServerState.FutureRow;
+            //     if (newFutureRowData == null || newFutureRowData.Length != _lastServerState.Cols)
+            //     {
+            //         Debug.LogWarning("Le moteur n'a pas fourni de FutureRow valide. Utilisation d'un tableau vide.");
+            //         newFutureRowData = new CellEffect[_lastServerState.Cols]; // Tableau vide par défaut
+            //     }
+            //     // 2. Passer cette ligne à Unity
+            //     gridManager.InsertRow(topRowData, newFutureRowData);
+            // }
+        }
+        else if (json.Contains("turn_result"))
         {
             Debug.Log("[GameManager] Tour reçu !");
             // TODO: Parser l'état et les events, puis appeler SyncUnityWithEngine
@@ -1050,7 +1071,56 @@ public class GameManager : MonoBehaviour
         
             GameState newState = Newtonsoft.Json.JsonConvert.DeserializeObject<GameState>(stateJson);
             List<GameEventData> events = Newtonsoft.Json.JsonConvert.DeserializeObject<List<GameEventData>>(root["events"].ToString());
+            CellEffect[] topRow = Newtonsoft.Json.JsonConvert.DeserializeObject<CellEffect[]>(root["insertedRow"].ToString());
+            CellEffect[] futureRow = newState.FutureRow;
+            foreach (var pState in newState.Players)
+            {
+                playerTargets[pState.ID] = new Vector2Int(pState.Row, pState.Col);
+            }
              // ✅ Convertir les events serveur en EffectEvent pour ta queue existante
+            foreach (var evt in events)
+            {
+                if(evt.NewHealth == -1)//-1 code dans le NewHealth means "juste remove the effect, no damage number to show" tmp code ?
+                {
+                    removeEffectQueue.Enqueue(new EffectEvent
+                    {
+                        playerId = evt.PlayerId,
+                        effectType = evt.Type,
+                        rank = evt.Rank
+                    });
+                }
+                else
+                {
+                    effectQueue.Enqueue(new EffectEvent
+                    {
+                        playerId = evt.PlayerId,
+                        launcherPlayerId = evt.LauncherId,
+                        effectType = evt.Type,
+                        value = evt.Row,
+                        rank = evt.Rank,
+                        hits = evt.Hits,
+                        newHealth = evt.NewHealth,
+                        weaponDirection = evt.WeaponDirection,
+                        participants = evt.Participants
+                    });
+                }
+            }
+            StartCoroutine(SyncUnityWithEngine(newState, topRow, futureRow));
+            _turnCompletion?.TrySetResult(true);
+            _lastServerState = newState;
+
+        }
+        else if(json.Contains("duel_result"))
+        {
+            var root = Newtonsoft.Json.Linq.JObject.Parse(json);
+            int isGold = root["isGold"].ToObject<int>();
+            int winnerId = root["winnerId"].ToObject<int>();
+            int loserId = root["loserId"].ToObject<int>();
+            Position loserNewPos = Newtonsoft.Json.JsonConvert.DeserializeObject<Position>(root["loserNewPos"].ToString());
+            GameState newState = Newtonsoft.Json.JsonConvert.DeserializeObject<GameState>(root["state"].ToString());
+            List<GameEventData> events = Newtonsoft.Json.JsonConvert.DeserializeObject<List<GameEventData>>(root["events"].ToString());
+
+            effectQueue.Clear();
             foreach (var evt in events)
             {
                 effectQueue.Enqueue(new EffectEvent
@@ -1066,32 +1136,53 @@ public class GameManager : MonoBehaviour
                     participants = evt.Participants
                 });
             }
-                StartCoroutine(SyncUnityWithEngine(newState));
-                   _turnCompletion?.TrySetResult(true);
-                
+
+            // Mettre à jour l'état local
+            _lastServerState = newState; 
+            StartCoroutine(DuelSequence(isGold == 0, winnerId, loserId, loserNewPos)); 
         }
     }
 
+    IEnumerator DuelSequence(bool isGold, int winnerId, int loserId, Position loserNewPos)
+    {
+        // 1. Spin de la pièce
+        yield return StartCoroutine(DuelUIManager.Instance.SpinCoinAndClose(isGold));
+        
+        // 2. Ensuite seulement : anim du push
+        yield return StartCoroutine(ResolveDuelAnimation(winnerId, loserId, loserNewPos));
+        
+        if (effectQueue.Count > 0)
+        {
+            yield return StartCoroutine(ProcessEffectQueue());
+        }
+        // 3. FINI : on peut reset
+        isDuelInProgress = false;
+        
+        // 4. Relancer la phase de sélection
+        StartSelectionPhase(_lastServerState);
+        //StartCoroutine(SyncUnityWithEngine(newState, topRow, futureRow));
+    }
 
-    IEnumerator SyncUnityWithEngine(GameState state)
+    IEnumerator SyncUnityWithEngine(GameState state, CellEffect[] topRow, CellEffect[] futureRow)
     {
             // 1. Désactiver les choix visuels (cyan/jaune)
         ClearHighlights();
 
         // 1. Récupérer la ligne du haut depuis le moteur
-            CellEffect[] topRowData = new CellEffect[state.Cols];
-            for(int c=0; c < state.Cols; c++) {
-                topRowData[c] = state.Grid[state.Rows - 1, c];
-            }
+            // CellEffect[] topRowData = new CellEffect[state.Cols];
+            // for(int c=0; c < state.Cols; c++) {
+            //     topRowData[c] = state.Grid[state.Rows - 1, c];
+            // }
 
-            CellEffect[] newFutureRowData = state.FutureRow;
-            if (newFutureRowData == null || newFutureRowData.Length != state.Cols)
-            {
-                Debug.LogWarning("Le moteur n'a pas fourni de FutureRow valide. Utilisation d'un tableau vide.");
-                newFutureRowData = new CellEffect[state.Cols]; // Tableau vide par défaut
-            }
-            // 2. Passer cette ligne à Unity
-            gridManager.InsertRow(topRowData, newFutureRowData);
+            // CellEffect[] newFutureRowData = state.FutureRow;
+            // if (newFutureRowData == null || newFutureRowData.Length != state.Cols)
+            // {
+            //     Debug.LogWarning("Le moteur n'a pas fourni de FutureRow valide. Utilisation d'un tableau vide.");
+            //     newFutureRowData = new CellEffect[state.Cols]; // Tableau vide par défaut
+            // }
+            // // 2. Passer cette ligne à Unity
+            // gridManager.InsertRow(topRowData, newFutureRowData);
+            gridManager.InsertRow(topRow, futureRow);
 
         areJumpsInProgress = true;
         // B. Faire sauter les joueurs vers leurs nouvelles positions calculées par le moteur
@@ -1147,6 +1238,11 @@ public class GameManager : MonoBehaviour
         yield return new WaitForSeconds(jumpDuration + 0.1f);
         areJumpsInProgress = false;
 
+        while (isDuelInProgress)
+        {
+            yield return null;
+        }
+        
         if (effectQueue.Count > 0)
         {
             yield return StartCoroutine(ProcessEffectQueue());
@@ -1225,7 +1321,7 @@ public class GameManager : MonoBehaviour
         player.transform.position = targetPosition;
     }
 
-    Vector2Int GetPlayerCurrentCell(int playerIndex)
+    public Vector2Int GetPlayerCurrentCell(int playerIndex)
     {
         if (players == null)
         {

@@ -48,6 +48,7 @@ public class GridManager : MonoBehaviour
             {
                 Vector3 position = new Vector3(c * cellSize, 0f, r * cellSize);
                 GameObject cell = Instantiate(cellPrefab, position, Quaternion.identity, transform);
+                cell.transform.localPosition = new Vector3(c * cellSize, 0f, r * cellSize);
                 Cell cellScript = cell.GetComponent<Cell>();
                 cellScript.row = r;  // r = row (0 à rows-1)
                 cellScript.col = c;  // c = col (0 à columns-1)
@@ -73,6 +74,8 @@ public class GridManager : MonoBehaviour
             isWeapon = data.isWeapon
         };
 
+
+        
         // 2. Trouve la configuration visuelle correspondante à cet effet
         CellEffectData visualConfig = effectVisuals.FirstOrDefault(x => x.effectType == data.type);
         if (visualConfig == null)
@@ -153,17 +156,15 @@ public class GridManager : MonoBehaviour
                     Debug.LogError("gridCells is null!");
                     return;
                 }
-                ;
-                gridCells[r - 1, c] = gridCells[r, c];
-                Vector3 newPos = new Vector3(c * cellSize, 0f, (r - 1) * cellSize);
-                gridCells[r, c].transform.localPosition = newPos;
-                gridCells[r, c].name = $"Cell_{r-1}_{c}";
-             
-                Cell cellScript = gridCells[r, c].GetComponent<Cell>();
-                cellScript.row = r - 1;  // ← NOUVEAU row
-                cellScript.col = c;
-
- 
+            
+                    gridCells[r - 1, c] = gridCells[r, c];
+                    Vector3 newPos = new Vector3(c * cellSize, 0f, (r - 1) * cellSize);
+                    gridCells[r, c].transform.localPosition = newPos;
+                    gridCells[r, c].name = $"Cell_{r-1}_{c}";
+                
+                    Cell cellScript = gridCells[r, c].GetComponent<Cell>();
+                    cellScript.row = r - 1;  // ← NOUVEAU row
+                    cellScript.col = c;  
             }
         }
         

@@ -97,6 +97,29 @@ public class GridManager : MonoBehaviour
         cellScript.SetIcon(visualConfig);
     }
 
+    public void ForceCellVisual(int row, int col, EffectType newType)
+    {
+        // Récupérer la cellule (tu dois avoir un tableau gridCells ou GetCell() existant)
+        if (row < 0 || row >= rows || col < 0 || col >= columns) return;
+        
+        GameObject cellObj = gridCells[row, col];
+        if (cellObj == null) return;
+
+        Cell cellScript = cellObj.GetComponent<Cell>();
+        if (cellScript == null) return;
+
+        // Trouver la config visuelle dans ton tableau effectVisuals
+        CellEffectData visualConfig = effectVisuals.FirstOrDefault(x => x.effectType == newType);
+        if (visualConfig == null) return;
+
+        // Appliquer le visuel via le script Cell
+        cellScript.SetIcon(visualConfig);
+        cellScript.SetVisual(visualConfig.backgroundColor, 1f);
+        
+        // Optionnel : Mettre à jour le type stocké dans la cellule
+        cellScript.currentEffect.type = newType;
+    }
+
     public void GenerateFutureRow(CellEffect[] futureData)
     {
         futureRow = new GameObject[columns];

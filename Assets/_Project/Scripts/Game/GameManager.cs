@@ -202,7 +202,7 @@ public class GameManager : MonoBehaviour
         while (effectQueue.Count > 0)
         {
             EffectEvent evt = effectQueue.Dequeue();
-            yield return StartCoroutine(OnEffectAppliedCoroutine(evt.playerId, evt.launcherPlayerId, evt.effectType, 
+            yield return StartCoroutine(OnEffectAppliedCoroutine(evt.playerId, evt.effectType, 
                                                                 evt.value, evt.rank, evt.hits, evt.newHealth, evt.weaponDirection, evt.participants));
         }
         while (removeEffectQueue.Count > 0)
@@ -219,7 +219,7 @@ public class GameManager : MonoBehaviour
         //StartSelectionPhase();
     }
 
-    public IEnumerator OnEffectAppliedCoroutine(int playerId, int launcherPlayerId, EffectType effectType, 
+    public IEnumerator OnEffectAppliedCoroutine(int playerId, EffectType effectType, 
                                             int value, int rank, EffectHitInfo[] hits, int newHealth, Direction weaponDirection = Direction.None, List<int> participants = null)
     {
          // 🔥 Le secret : chaque animation attend son tour
@@ -243,6 +243,21 @@ public class GameManager : MonoBehaviour
                 }
                 yield return new WaitForSeconds(0.5f);
                 UpdatePlayerHealthBar(playerId, newHealth);
+                break;
+
+            case EffectType.MegaJump:
+                Debug.Log($"Anim MegaJump Joueur {playerId+1}");
+                for (int i = 0; i < 5; i++)
+                {
+                    GameObject jumpParticle = GameObject.CreatePrimitive(PrimitiveType.Plane);
+                    jumpParticle.transform.position = playerObj.transform.position + Random.insideUnitSphere * 0.5f;
+                    jumpParticle.transform.localScale = new Vector3(0.2f, 0.2f, 0.2f);
+                    jumpParticle.GetComponent<Renderer>().material.color = Color.blue;
+
+                    // Faire monter la particule puis la détruire
+                    StartCoroutine(MoveUpAndDestroy(jumpParticle));
+                }
+                yield return new WaitForSeconds(0.5f);
                 break;
 
             case EffectType.DamageBomb:
@@ -456,6 +471,34 @@ public class GameManager : MonoBehaviour
                 shieldSphere.transform.localScale = originalScale;
                 break;
 
+            case EffectType.Random:
+            Debug.Log($"[Anim] Random Joueur {playerId+1}");
+                
+                // Le serveur nous a envoyé le type final dans 'evt.value'
+                EffectType finalType = (EffectType)value;
+                
+                // 1. Animation "Machine à sous" sur le joueur
+                // (ex: un point d'interrogation qui tourne au-dessus de sa tête)
+                GameObject questionMark = GameObject.CreatePrimitive(PrimitiveType.Cube); // Remplacer par ton vrai FX
+                questionMark.transform.position = playerObj.transform.position + Vector3.up * 1.5f;
+                questionMark.GetComponent<Renderer>().material.color = Color.magenta;
+                
+                yield return new WaitForSeconds(1.0f); // Le temps de la roulette
+                Destroy(questionMark);
+
+                // 2. Changer visuellement la case en dessous du joueur 
+                Vector2Int pPos = GetPlayerCurrentCell(playerId);
+                
+                // ✅ Utiliser la nouvelle fonction du GridManager
+                if (gridManager != null)
+                {
+                    gridManager.ForceCellVisual(pPos.x, pPos.y, finalType);
+                }
+                
+                // Petite pause "Révélation" avant que le vrai effet ne frappe
+                yield return new WaitForSeconds(0.5f);
+                break;
+                
             case EffectType.CollisionDuel:
                  Debug.Log($"⚔️ Duel Visuel lancé ! Participants: {string.Join(", ", participants)}");
                 if (isDuelInProgress) yield break; // Évite les doublons
@@ -867,7 +910,17 @@ public class GameManager : MonoBehaviour
     {
         Vector2Int playerCell = gridManager.GetCellFromWorldPosition(player.transform.position);
         Debug.Log($"ShowCellsAroundPlayer: joueur en ({playerCell.x},{playerCell.y})");
-        List<Vector2Int> selectableCells = gridManager.GetCellsInRadius(playerCell, 3);
+
+        var radius = 3; // Rayon de sélection
+        if(_lastServerState != null)
+        {
+            var pState = _lastServerState.Players.FirstOrDefault(p => p.ID == localPlayerID);
+            if (pState.MegaJumpTurnsRemaining > 0)
+            {
+                radius = 8;
+            }
+        }
+        List<Vector2Int> selectableCells = gridManager.GetCellsInRadius(playerCell, radius);
         
         foreach (var cell in selectableCells)
         {
@@ -1272,8 +1325,9 @@ public class GameManager : MonoBehaviour
             yield break; // On arrête la boucle du jeu
         }
 
-        // D. Relancer le tour suivant
-        StartSelectionPhase(state);
+        if(!isDuelInProgress)
+            // D. Relancer le tour suivant
+            StartSelectionPhase(state);
     }
     
     IEnumerator ReboundAnimation(GameObject player, Vector2Int intended, Vector2Int actual)
@@ -1356,7 +1410,7 @@ public class GameManager : MonoBehaviour
     }
 
     // Dans GameManager.cs
-    Vector2Int DetermineAITarget(int playerIndex)
+    Vector2Int DetermineAITarget(int playerIndex)//TODO adjust and move the choice in server side later
     {
         // 1. Sécurité : vérifier que le joueur est valide
         if (playerIndex < 0 || playerIndex >= players.Length || players[playerIndex] == null)
@@ -1369,7 +1423,16 @@ public class GameManager : MonoBehaviour
         Vector2Int currentCell = GetPlayerCurrentCell(playerIndex);
 
         // 2. Récupérer TOUTES les cases atteignables (même rayon 2 que l'humain)
-        List<Vector2Int> reachableCells = gridManager.GetCellsInRadius(currentCell, 2);
+        var radius = 3; // Rayon de sélection par défaut
+        if(_lastServerState != null)
+        {
+            var pState = _lastServerState.Players.FirstOrDefault(p => p.ID == localPlayerID);
+            if (pState.MegaJumpTurnsRemaining > 0)
+            {
+                radius = 8;
+            }
+        }
+        List<Vector2Int> reachableCells = gridManager.GetCellsInRadius(currentCell, radius);
 
         // 3. Si pas de case atteignable, rester sur place
         if (reachableCells.Count == 0)

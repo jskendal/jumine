@@ -18,6 +18,8 @@ public enum EffectType
     Freeze,
     Laser,
     Spray,
+    Random,
+    MegaJump,
     CollisionDuel
 }
 
@@ -57,6 +59,7 @@ public struct PlayerState
     public int PoisonTurnsRemaining;
     public int ArmorTurnsRemaining;
     public int FreezeTurnsRemaining;
+    public int MegaJumpTurnsRemaining;
     public int isFrozen;
     public bool startPoison;
 }

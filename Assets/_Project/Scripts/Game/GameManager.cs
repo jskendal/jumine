@@ -5,6 +5,7 @@ using static GridManager;
 using UnityEngine.UI;
 using System.Linq;
 using System.Threading.Tasks;
+using TMPro;
 
 public class GameManager : MonoBehaviour
 {
@@ -39,7 +40,7 @@ public class GameManager : MonoBehaviour
     private float selectionTimer = 0f;
     private bool isSelectionPhase = true;
     public GameObject[] players;
- 
+
     private List<GameObject> highlightedBorders = new List<GameObject>();
     public static GameManager instance;
 
@@ -55,13 +56,14 @@ public class GameManager : MonoBehaviour
     public int localPlayerID = 1; 
     public ControlMode[] playerControlModes = new ControlMode[4] { ControlMode.AI, ControlMode.Human, ControlMode.AI, ControlMode.AI };
     
-    private GameEngine engine; // Le moteur de jeu
     public List<PlayerAction> currentTurnActions = new List<PlayerAction>();
-    private int[] playerCols = new int[] { 2, 7, 12, 17 }; 
 
     private Queue<EffectEvent> effectQueue = new Queue<EffectEvent>();
     private Queue<EffectEvent> removeEffectQueue = new Queue<EffectEvent>();
     private bool isProcessingEffects = false;
+
+    public Canvas gameCanvas;
+
     private bool areJumpsInProgress = false;
 
     // Structure pour stocker les événements
@@ -80,69 +82,19 @@ public class GameManager : MonoBehaviour
 
     void Start()
     {
-        // Initialiser le moteur de jeu
-        //engine = new GameEngine(gridManager.rows, gridManager.columns);
-
-        // Ajouter les 4 joueurs au moteur
-        // for(int i=0; i<4; i++)
+        // if (SimpleWebSocketClient.Instance != null)
         // {
-        //     engine.AddPlayer(new PlayerState
-        //     {
-        //         ID = i,
-        //         Health = 100,
-        //         MaxHealth = 100,
-        //         Row = 0,
-        //         Col = playerCols[i],
-        //         IsAlive = true
-        //     });
+        //     SimpleWebSocketClient.Instance.gameManager = this;
+        //     Debug.Log("GameManager connecté au WebSocketClient");
         // }
+        networkClient = FindObjectOfType<SimpleWebSocketClient>();
+        if (gameCanvas != null)
+            gameCanvas.enabled = false;
 
         StartCoroutine(StartGameAfterGridReady());
 
         InitializeHealthUI();
-
-        // engine.SingleEffectApplied += (playerId, type, row, rank, newHealth) =>
-        // {
-        //     effectQueue.Enqueue(new EffectEvent {
-        //         playerId = playerId,
-        //         effectType = type,
-        //         value = row,
-        //         rank = rank,
-        //         hits = null,
-        //         newHealth = newHealth
-        //     });
-        // };
-        // engine.MultiEffectApplied += (launcherId, type, row, rank, hits, direction) => 
-        // {
-        //     effectQueue.Enqueue(new EffectEvent {
-        //         playerId = launcherId,
-        //         effectType = type,
-        //         value = row, 
-        //         rank = rank,
-        //         hits = hits,
-        //         weaponDirection = direction
-        //     });
-        //     // if (!isProcessingEffects && !areJumpsInProgress)
-        //     //     StartCoroutine(ProcessEffectQueue());
-        // };
-        // engine.SingleEffectRemoved += (playerId, type, rank) =>
-        // {
-        //     removeEffectQueue.Enqueue(new EffectEvent {
-        //         playerId = playerId,
-        //         effectType = type,
-        //         rank = rank
-        //     });
-        // };
-        // engine.CollisionDetected += (launcherId, type, nbPlayers, rank, participants) => 
-        // {
-        //     effectQueue.Enqueue(new EffectEvent {
-        //         playerId = launcherId,
-        //         effectType = type,
-        //         value = nbPlayers, // On utilise value pour stocker le nombre de joueurs
-        //         rank = rank,
-        //         participants = participants // On transmet la liste des IDs
-        //     });
-        // };
+ 
     }
     
         // ═══════════════════════════════════════════
@@ -187,7 +139,6 @@ public class GameManager : MonoBehaviour
         if (playerControlModes == null || playerControlModes.Length != 4)
             playerControlModes = new ControlMode[4];
 
-        // Si tu veux FORCER une config par défaut à chaque lancement (pour debug)
         playerControlModes[0] = ControlMode.AI;
         playerControlModes[1] = ControlMode.Human;
         playerControlModes[2] = ControlMode.AI;
@@ -246,16 +197,21 @@ public class GameManager : MonoBehaviour
                 break;
 
             case EffectType.MegaJump:
-                Debug.Log($"Anim MegaJump Joueur {playerId+1}");
-                for (int i = 0; i < 5; i++)
+                int count = Random.Range(3, 8); // Plus ou moins de particules
+                
+                for (int i = 0; i < count; i++)
                 {
-                    GameObject jumpParticle = GameObject.CreatePrimitive(PrimitiveType.Plane);
-                    jumpParticle.transform.position = playerObj.transform.position + Random.insideUnitSphere * 0.5f;
-                    jumpParticle.transform.localScale = new Vector3(0.2f, 0.2f, 0.2f);
-                    jumpParticle.GetComponent<Renderer>().material.color = Color.blue;
+                    var part = GameObject.CreatePrimitive(PrimitiveType.Plane);
+                    part.transform.position = playerObj.transform.position;
+                    
+                    // Variation
+                    part.transform.localScale = Vector3.one * Random.Range(0.1f, 0.5f); // Taille aléatoire
+                    part.transform.rotation = Quaternion.Euler(Random.Range(0, 360), 0, Random.Range(0, 360)); // Rotation aléatoire
+                    
+                    // Couleur variée (bleu clair à bleu foncé)
+                    part.GetComponent<Renderer>().material.color = Color.Lerp(Color.cyan, Color.blue, Random.value);
 
-                    // Faire monter la particule puis la détruire
-                    StartCoroutine(MoveUpAndDestroy(jumpParticle));
+                    StartCoroutine(MoveUpAndDestroy(part));
                 }
                 yield return new WaitForSeconds(0.5f);
                 break;
@@ -472,7 +428,7 @@ public class GameManager : MonoBehaviour
                 break;
 
             case EffectType.Random:
-            Debug.Log($"[Anim] Random Joueur {playerId+1}");
+                Debug.Log($"[Anim] Random Joueur {playerId+1}");
                 
                 // Le serveur nous a envoyé le type final dans 'evt.value'
                 EffectType finalType = (EffectType)value;
@@ -781,16 +737,24 @@ public class GameManager : MonoBehaviour
             // Tu peux aussi désactiver le Slider entier ou son GameObject pour un joueur KO
             // targetSlider.gameObject.SetActive(false); 
             
-            // if (players[playerIndex].activeSelf)
-            // {
-            //     players[playerIndex].SetActive(false);
-            // }
+            if (players[playerIndex].activeSelf)
+            {
+                players[playerIndex].SetActive(false);
+            }
         }
         else
         {
             if (!fillImage.enabled) fillImage.enabled = true;
             fillImage.color = GetPlayerColor(playerIndex);
         }
+        
+    }
+
+    void UpdatePlayerUI(int index, string name, int health, int maxHealth)
+    {
+        // Adapte selon ta structure UI
+        // Exemple si tu as des TextMeshProUGUI :
+        playerLabels[index].text = name;
     }
 
     IEnumerator StartGameAfterGridReady()
@@ -803,8 +767,12 @@ public class GameManager : MonoBehaviour
         ForceCameraPosition();
         SpawnPlayers();
         selectionTimer = selectionTime;
-        if (timerText != null) timerText.text = $"CHOISISSEZ ! {selectionTimer:F1}s";
+ 
         if (timerSlider != null) { timerSlider.maxValue = 1f; timerSlider.value = 1f; }
+
+        if (gameCanvas != null)
+            gameCanvas.enabled = true; 
+
         StartSelectionPhase();
     }
     
@@ -1091,29 +1059,27 @@ public class GameManager : MonoBehaviour
             gridManager.GenerateGrid(initialState);
             gridManager.CenterGrid();
             gridManager.GenerateFutureRow(initialState.FutureRow);
-
+            string savedNick = PlayerPrefs.GetString("nickname", "");
+            localPlayerID = -1;
+            
             foreach (var pState in initialState.Players)
+            {
                 playerTargets[pState.ID] = new Vector2Int(pState.Row, pState.Col);
+                if (pState.ID != -1)
+                {
+                    UpdatePlayerUI(pState.ID, pState.Name, pState.Health, pState.MaxHealth);
+                }
+                if (pState.Name == savedNick && !pState.IsAI)
+                {
+                    localPlayerID = pState.ID;
+                }
+                playerControlModes[pState.ID] = pState.IsAI ? ControlMode.AI : ControlMode.Human;
+            }
+
 
             _gameStartReceived = true; // Débloquer StartGameAfterGridReady
             _lastServerState = initialState;
-
-            
-            // if(!hasDoneSpawnPlayers ) {
-            //     CellEffect[] topRowData = new CellEffect[_lastServerState.Cols];
-            //     for(int c=0; c < _lastServerState.Cols; c++) {
-            //         topRowData[c] = _lastServerState.Grid[_lastServerState.Rows - 1, c];
-            //     }
-
-            //     CellEffect[] newFutureRowData = _lastServerState.FutureRow;
-            //     if (newFutureRowData == null || newFutureRowData.Length != _lastServerState.Cols)
-            //     {
-            //         Debug.LogWarning("Le moteur n'a pas fourni de FutureRow valide. Utilisation d'un tableau vide.");
-            //         newFutureRowData = new CellEffect[_lastServerState.Cols]; // Tableau vide par défaut
-            //     }
-            //     // 2. Passer cette ligne à Unity
-            //     gridManager.InsertRow(topRowData, newFutureRowData);
-            // }
+ 
         }
         else if (json.Contains("turn_result"))
         {

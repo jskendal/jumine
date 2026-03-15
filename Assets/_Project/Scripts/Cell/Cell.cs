@@ -81,7 +81,7 @@ public class Cell : MonoBehaviour
         myRenderer.material = mat;
     }
 
-    void OnMouseDown()
+    public void OnMouseDown()
     {
         if (gridManager == null) return;
         

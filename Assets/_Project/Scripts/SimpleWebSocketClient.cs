@@ -17,42 +17,85 @@ public class SimpleWebSocketClient : MonoBehaviour
 
     void Start()
     {
-        Connect();
     }
 
-    async void Connect()
+    // async void Connect()
+    // {
+    //     _ws = new ClientWebSocket();
+    //     _cts = new CancellationTokenSource();
+
+    //     try
+    //     {
+    //         Debug.Log("Tentative de connexion à " + url);
+    //         await _ws.ConnectAsync(new Uri(url), _cts.Token);
+    //         _isConnected = true;
+    //         Debug.Log("✅ CONNECTÉ AU SERVEUR !");
+
+    //         bool[] isAIConfig = new bool[4];
+    //         for (int i = 0; i < 4; i++)
+    //         {
+    //             isAIConfig[i] = gameManager.playerControlModes[i] == ControlMode.AI;
+    //         }
+ 
+    //         string json = Newtonsoft.Json.JsonConvert.SerializeObject(new {
+    //             op = "join",
+    //             aiConfig = isAIConfig
+    //         });
+
+    //         // Envoyer via WebSocket
+    //         await Send(json);
+
+    //         // Lancer la boucle de réception
+    //         _ = ReceiveLoop();
+    //     }
+    //     catch (Exception e)
+    //     {
+    //         Debug.LogError("❌ Échec connexion: " + e.Message);
+    //     }
+    // }
+
+    public async void ConnectAndJoin(string mode, string playerName)
     {
         _ws = new ClientWebSocket();
         _cts = new CancellationTokenSource();
 
         try
         {
-            Debug.Log("Tentative de connexion à " + url);
+            Debug.Log("Connexion au serveur...");
             await _ws.ConnectAsync(new Uri(url), _cts.Token);
-            _isConnected = true;
-            Debug.Log("✅ CONNECTÉ AU SERVEUR !");
+            Debug.Log("✅ Connecté !");
 
-            bool[] isAIConfig = new bool[4];
-            for (int i = 0; i < 4; i++)
+            // Envoie directement la config Solo (toi + 3 IA)
+            bool[] isAIConfig = { false, true, true, true }; // [0] = toi (humain), [1-3] = IA
+            object msg;
+            
+            string name = PlayerPrefs.GetString("nickname", "Player1");
+            if (mode == "solo")
             {
-                isAIConfig[i] = gameManager.playerControlModes[i] == ControlMode.AI;
+                msg = new { op = "joinSolo", playerName = playerName };
             }
- 
-            string json = Newtonsoft.Json.JsonConvert.SerializeObject(new {
-                op = "join",
-                aiConfig = isAIConfig
-            });
-
-            // Envoyer via WebSocket
+            else // multi
+            {
+                msg = new { op = "join_queue", playerName = playerName };
+            }
+            string json = Newtonsoft.Json.JsonConvert.SerializeObject(msg);
             await Send(json);
 
-            // Lancer la boucle de réception
-            _ = ReceiveLoop();
+            _ = ReceiveLoop(); // Lance l'écoute
         }
         catch (Exception e)
         {
-            Debug.LogError("❌ Échec connexion: " + e.Message);
+            Debug.LogError($"Erreur : {e.Message}");
         }
+    }
+
+    public async void CancelQueue()
+    {
+        if (_ws?.State != WebSocketState.Open) return;
+        
+        var msg = new { op = "cancel_queue" };
+        string json = Newtonsoft.Json.JsonConvert.SerializeObject(msg);
+        await Send(json);
     }
 
     async Task ReceiveLoop()
@@ -86,8 +129,13 @@ public class SimpleWebSocketClient : MonoBehaviour
                 string msg = sb.ToString();
                 Debug.Log("📩 Reçu complet: " + msg);
 
-                if (gameManager != null)
-                    gameManager.OnServerMessage(msg);
+                GameManager gm = FindObjectOfType<GameManager>();
+                if (gm != null)
+                    gm.OnServerMessage(msg);
+
+                MainMenuManager mmm = FindObjectOfType<MainMenuManager>();
+                if (mmm != null)
+                    mmm.OnServerMessage(msg);
             }
             catch (Exception e)
             {
@@ -104,6 +152,12 @@ public class SimpleWebSocketClient : MonoBehaviour
             var bytes = Encoding.UTF8.GetBytes(message);
             await _ws.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None);
         }
+    }
+
+    void OnDestroy()
+    {
+        _cts?.Cancel();
+        _ws?.Dispose();
     }
 
     void OnApplicationQuit()

@@ -12,7 +12,7 @@ public class GridManager : MonoBehaviour
     [Header("Prefabs")]
     public GameObject cellPrefab;
     
-    private GameObject[,] gridCells;
+    public GameObject[,] gridCells;
     private GameObject[] futureRow;
     private bool isGridReady = false;
     
@@ -232,7 +232,7 @@ public class GridManager : MonoBehaviour
         
         return Vector3.zero;
     }
-    
+ 
     public Vector2Int GetCellFromWorldPosition(Vector3 worldPos)
     {
         Vector3 localPos = transform.InverseTransformPoint(worldPos);
@@ -305,16 +305,7 @@ public class GridManager : MonoBehaviour
     {
         selectableCells.Clear();
     }
-
-
-    // public enum CellType
-    // {
-    //     Neutral,
-    //     HealthPotion,   // Vert (+ vie)
-    //     DamageBomb      // Rouge (- vie)
-    //     // On ajoutera plus tard : Missile, Nuclear, SpeedBoost, etc.
-    // }
-
+ 
     public CellEffect GetCellEffect(int row, int col)
     {
         if (row < 0 || row >= rows || col < 0 || col >= columns) 

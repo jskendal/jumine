@@ -12,6 +12,23 @@
 
 using System.Collections.Generic;
 
+
+public enum EffectType 
+{ 
+    Neutral, 
+    HealthPotion, 
+    DamageBomb, 
+    Poison, 
+    Missile,
+    Armor, 
+    Freeze,
+    Laser,
+    Spray,
+    Random,
+    MegaJump,
+    CollisionDuel
+}
+
 [System.Serializable]
 public struct CellEffect
 {
@@ -36,6 +53,8 @@ public struct EffectHitInfo
     public int NewHealth;  // HP après l’impact
 }
 
+public enum Direction { Up, Down, UpAndDown, Left, Right, LeftAndRight, All, None } 
+
 public enum ControlMode { Human, AI, Remote }
 
 public struct Position
@@ -50,6 +69,13 @@ public struct Position
     }
 }
 
+public struct PlayerAction
+{
+    public int PlayerID;
+    public int TargetRow;
+    public int TargetCol;
+}
+
 public struct GameEventData
 {
     public EffectType Type;           // Ton enum direct
@@ -61,4 +87,41 @@ public struct GameEventData
     public Direction WeaponDirection; // Ta enum direct
     public EffectHitInfo[]? Hits;     // Cibles touchées (peut être null)
     public List<int>? Participants;   // Joueurs dans un duel
+}
+
+public struct CollisionDuel
+{
+    public int DuelId;
+    public int Row;
+    public int Col;
+    public List<int> PlayerIDs; // Les IDs des 2, 3 ou 4 joueurs sur cette case
+}
+
+public struct PlayerState
+{
+    public int ID;
+    public int Health;
+    public int MaxHealth;
+    public int Row;
+    public int Col;
+    public bool IsAlive;
+    public bool IsAI;
+    public int PoisonTurnsRemaining;
+    public int ArmorTurnsRemaining;
+    public int FreezeTurnsRemaining;
+    public int MegaJumpTurnsRemaining;
+    public string Name;
+}
+
+public class GameState
+{
+    public int CurrentTurn;
+    public CellEffect[,] Grid;
+    public List<PlayerState> Players;
+    public int Rows;
+    public int Cols;
+    public bool HasDoneFirstTurn;
+    public CellEffect[] FutureRow;
+    public List<CollisionDuel> CurrentDuels = new List<CollisionDuel>();
+    public Dictionary<int, Position> PlayerFinalPositions = new Dictionary<int, Position>();
 }

@@ -92,7 +92,7 @@ public class MainMenuManager : MonoBehaviour
         }
 
         // Connexion + envoi de la config Solo
-        wsClient.ConnectAndJoin("solo", playerNickname);
+        wsClient.ConnectAndJoin("join", playerNickname);
 
         // Une fois 4/4 atteint, on charge le jeu
         yield return new WaitForSeconds(0.2f);
@@ -134,11 +134,12 @@ public class MainMenuManager : MonoBehaviour
 
     public void OnClickFillAI()
     {
-        // if (wsClient != null)
-        //     wsClient.AgreeFillAI();
+        if (wsClient != null)
+            wsClient.AgreeFillAI();
         
-        AddAgreementCircle();
-         fillAiButton.GetComponent<Button>().interactable = false;
+        Transform myCircle = circlesParent.GetChild(0);
+        myCircle.GetComponent<Image>().color = Color.green;
+        fillAiButton.GetComponent<Button>().interactable = false;
     }
 
     public void OnServerMessage(string json)
@@ -152,6 +153,7 @@ public class MainMenuManager : MonoBehaviour
             {
                 case "queue_update":
                     int count = root["count"]?.Value<int>() ?? 0;
+                    playersInQueue = count;
                     UpdateQueueCount(count);
                     break;
 
@@ -166,7 +168,10 @@ public class MainMenuManager : MonoBehaviour
                     break;
 
                 case "match_found":
-                    SceneManager.LoadScene("GameScene");
+                    Debug.Log("Tous les joueurs ont accepté !");
+                    // Connexion + envoi de la config Solo
+                    wsClient.ConnectAndJoin("join", playerNickname);
+                    SceneManager.LoadScene(gameSceneName);
                     break;
             }
         }
@@ -185,24 +190,27 @@ public class MainMenuManager : MonoBehaviour
 
     void ShowFillAiButton(int playerCount)
     {
+        Debug.Log($"ShowFillAiButton: playerCount={playerCount}, circlesParent={circlesParent != null}");
         fillAiButton.SetActive(true);
+         
+        playersInQueue = playerCount;
         if (circlesParent != null)
         {
             foreach (Transform child in circlesParent) 
                 Destroy(child.gameObject);
         }
+
+        // Crée 1 cercle par joueur présent
+        for (int i = 0; i < playerCount; i++)
+            Instantiate(circlePrefab, circlesParent);
     }
 
     void OnPlayerAgreedAI(int playerId)
     {
         agreedPlayers.Add(playerId);
-        AddAgreementCircle();
-
-        if (agreedPlayers.Count >= playersInQueue)
-        {
-            Debug.Log("Tous les joueurs ont accepté !");
-            // Le serveur va envoyer match_found
-        }
+        //AddAgreementCircle();
+        Transform circle = circlesParent.GetChild(agreedPlayers.Count - 1);
+        circle.GetComponent<Image>().color = Color.green;
     }
 
     void AddAgreementCircle()
@@ -211,13 +219,14 @@ public class MainMenuManager : MonoBehaviour
         {
             Debug.LogWarning("circlesParent ou circlePrefab non assigné !");
             return;
-        }
-
+        } 
         GameObject circle = Instantiate(circlePrefab, circlesParent);
         circle.name = $"Circle_{agreedPlayers.Count - 1}";
         // Réinitialiser le scale/localPosition si besoin
         circle.transform.localScale = Vector3.one;
         circle.transform.localPosition = Vector3.zero;
+ 
+        circle.GetComponent<Image>().color = Color.green;
     }
 
     void ResetMatchmakingUI()
@@ -271,10 +280,5 @@ public class MainMenuManager : MonoBehaviour
         if (countPlayersText != null)
             countPlayersText.text = $"{current}/{required}";
     }
-
-    // On utilisera cette fonction plus tard quand le serveur dira "match found"
-    public void StartMultiplayerGame()
-    {
-        SceneManager.LoadScene(gameSceneName);
-    }
+ 
 }

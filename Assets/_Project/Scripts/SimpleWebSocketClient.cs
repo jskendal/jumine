@@ -10,6 +10,7 @@ using UnityEngine;
 public class SimpleWebSocketClient : MonoBehaviour
 {
     public string url = "ws://localhost:5000/ws";
+    ///public string url = "ws://192.168.1.16:5000/ws";
     public GameManager gameManager;
     private ClientWebSocket _ws;
     private bool _isConnected = false;
@@ -19,43 +20,19 @@ public class SimpleWebSocketClient : MonoBehaviour
     {
     }
 
-    // async void Connect()
-    // {
-    //     _ws = new ClientWebSocket();
-    //     _cts = new CancellationTokenSource();
-
-    //     try
-    //     {
-    //         Debug.Log("Tentative de connexion à " + url);
-    //         await _ws.ConnectAsync(new Uri(url), _cts.Token);
-    //         _isConnected = true;
-    //         Debug.Log("✅ CONNECTÉ AU SERVEUR !");
-
-    //         bool[] isAIConfig = new bool[4];
-    //         for (int i = 0; i < 4; i++)
-    //         {
-    //             isAIConfig[i] = gameManager.playerControlModes[i] == ControlMode.AI;
-    //         }
- 
-    //         string json = Newtonsoft.Json.JsonConvert.SerializeObject(new {
-    //             op = "join",
-    //             aiConfig = isAIConfig
-    //         });
-
-    //         // Envoyer via WebSocket
-    //         await Send(json);
-
-    //         // Lancer la boucle de réception
-    //         _ = ReceiveLoop();
-    //     }
-    //     catch (Exception e)
-    //     {
-    //         Debug.LogError("❌ Échec connexion: " + e.Message);
-    //     }
-    // }
-
     public async void ConnectAndJoin(string mode, string playerName)
     {
+        if (_ws != null && _ws.State == WebSocketState.Open)
+        {
+            Debug.Log("✅ Déjà connecté, envoi du message direct.");
+            // Envoie juste le message, pas de nouvelle connexion
+            object msg = (mode == "join") 
+                ? new { op = "join", playerName = playerName }
+                : new { op = "join_queue", playerName = playerName };
+                
+            await Send(Newtonsoft.Json.JsonConvert.SerializeObject(msg));
+            return; 
+        }
         _ws = new ClientWebSocket();
         _cts = new CancellationTokenSource();
 
@@ -65,16 +42,14 @@ public class SimpleWebSocketClient : MonoBehaviour
             await _ws.ConnectAsync(new Uri(url), _cts.Token);
             Debug.Log("✅ Connecté !");
 
-            // Envoie directement la config Solo (toi + 3 IA)
-            bool[] isAIConfig = { false, true, true, true }; // [0] = toi (humain), [1-3] = IA
             object msg;
             
             string name = PlayerPrefs.GetString("nickname", "Player1");
-            if (mode == "solo")
+            if (mode == "join")
             {
-                msg = new { op = "joinSolo", playerName = playerName };
+                msg = new { op = "join", playerName = playerName };
             }
-            else // multi
+            else // queue
             {
                 msg = new { op = "join_queue", playerName = playerName };
             }
@@ -89,6 +64,17 @@ public class SimpleWebSocketClient : MonoBehaviour
         }
     }
 
+    public void AgreeFillAI()
+    {
+        if (_ws?.State != WebSocketState.Open) return;
+        
+        var msg = new { op = "agree_fill_ai" };
+        string json = Newtonsoft.Json.JsonConvert.SerializeObject(msg);
+        _ = Send(json);
+        
+        Debug.Log("✅ J'ai cliqué sur 'Avec IA'");
+    }
+    
     public async void CancelQueue()
     {
         if (_ws?.State != WebSocketState.Open) return;

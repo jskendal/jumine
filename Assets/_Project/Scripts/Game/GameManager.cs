@@ -197,21 +197,15 @@ public class GameManager : MonoBehaviour
                 break;
 
             case EffectType.MegaJump:
-                int count = Random.Range(3, 8); // Plus ou moins de particules
-                
-                for (int i = 0; i < count; i++)
+                for (int i = 0; i < 5; i++)
                 {
-                    var part = GameObject.CreatePrimitive(PrimitiveType.Plane);
-                    part.transform.position = playerObj.transform.position;
-                    
-                    // Variation
-                    part.transform.localScale = Vector3.one * Random.Range(0.1f, 0.5f); // Taille aléatoire
-                    part.transform.rotation = Quaternion.Euler(Random.Range(0, 360), 0, Random.Range(0, 360)); // Rotation aléatoire
-                    
-                    // Couleur variée (bleu clair à bleu foncé)
-                    part.GetComponent<Renderer>().material.color = Color.Lerp(Color.cyan, Color.blue, Random.value);
+                    GameObject healParticle = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                    healParticle.transform.position = playerObj.transform.position + Random.insideUnitSphere * 0.5f;
+                    healParticle.transform.localScale = new Vector3(0.2f, 0.2f, 0.2f);
+                    healParticle.GetComponent<Renderer>().material.color = Color.blue;
 
-                    StartCoroutine(MoveUpAndDestroy(part));
+                    // Faire monter la particule puis la détruire
+                    StartCoroutine(MoveUpAndDestroy(healParticle));
                 }
                 yield return new WaitForSeconds(0.5f);
                 break;

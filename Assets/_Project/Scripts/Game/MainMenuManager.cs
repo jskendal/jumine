@@ -48,10 +48,14 @@ public class MainMenuManager : MonoBehaviour
         }
 
         if (PlayerPrefs.HasKey("nickname"))
+        {
             playerNickname = PlayerPrefs.GetString("nickname");
+        }
         else
+        {
             playerNickname = "Player" + Random.Range(1000, 9999);
- 
+            PlayerPrefs.SetString("nickname", playerNickname);
+        }
     }
 
     public void ShowMainMenu()  

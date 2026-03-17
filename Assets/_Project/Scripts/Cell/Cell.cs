@@ -83,6 +83,14 @@ public class Cell : MonoBehaviour
 
     public void OnMouseDown()
     {
+        #if UNITY_EDITOR
+        HandleClick(); // Seulement dans l'éditeur
+        #endif
+    }
+ 
+
+    public void HandleClick()
+    {
         if (gridManager == null) return;
         
         if (gridManager.IsCellSelectable(row, col))

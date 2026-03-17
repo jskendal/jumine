@@ -30,7 +30,23 @@ public class GridManager : MonoBehaviour
         isGridReady = true;
     }
     
-    
+    void Update()
+    {
+        #if !UNITY_EDITOR
+        if (Input.touchCount > 0 && Input.GetTouch(0).phase == TouchPhase.Began)
+        {
+            Ray ray = Camera.main.ScreenPointToRay(Input.GetTouch(0).position);
+            if (Physics.Raycast(ray, out RaycastHit hit))
+            {
+                Cell cell = hit.collider.GetComponent<Cell>();
+                if (cell != null)
+                {
+                    cell.HandleClick();
+                }
+            }
+        }
+        #endif
+    }
     public bool IsGridReady()
     {
         return isGridReady;

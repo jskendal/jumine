@@ -12,8 +12,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 6a5f93a296b7a0045808d4d1c4d106e5, type: 3}
   m_Name: MegaJump
   m_EditorClassIdentifier: Assembly-CSharp::CellEffectData
-  effectType: 10
+  effectType: 12
   iconSprite: {fileID: 21300000, guid: 7ec11e97f340f9b4d9f15a56b9673196, type: 3}
-  backgroundColor: {r: 0.5960785, g: 0.9843138, b: 0.5960785, a: 1}
+  backgroundColor: {r: 0.5647059, g: 0.9333334, b: 0.5686275, a: 1}
   iconTint: {r: 0.254902, g: 0.4117647, b: 0.882353, a: 1}
   futureRowAlpha: 0.51

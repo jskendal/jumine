@@ -6,6 +6,7 @@ using UnityEngine.UI;
 using System.Linq;
 using System.Threading.Tasks;
 using TMPro;
+using System;
 
 public class GameManager : MonoBehaviour
 {
@@ -19,7 +20,7 @@ public class GameManager : MonoBehaviour
 
     [Header("Paramètres")]
     public float timeBetweenRows = 5f;
-    public float selectionTime = 10f;
+    public float selectionTime = 4f;
     
     [Header("Camera")]
     public Camera mainCamera;
@@ -32,7 +33,9 @@ public class GameManager : MonoBehaviour
     public float jumpDuration = 0.5f;
     
     [Header("UI")]
-    public UnityEngine.UI.Text timerText;
+    public TextMeshProUGUI centralText;
+    [SerializeField] 
+    private Button exitButton;
     public UnityEngine.UI.Slider timerSlider;
     
     // Variables
@@ -66,13 +69,17 @@ public class GameManager : MonoBehaviour
 
     private bool areJumpsInProgress = false;
 
-    // Structure pour stocker les événements
+    private bool _allDuelsResolved = false;
+    private Queue<EffectEvent> _duelQueue = new Queue<EffectEvent>();
+    private bool _duelQueueRunning = false;
+    
+    private Action<bool, int, int, Position, int> _pendingDuelResultCallback = null;
     public struct EffectEvent
     {
         public int playerId;
         public int launcherPlayerId;
         public EffectType effectType;
-        public int value;
+        public int value;//if laser or missile, the row or col. It's special for random cell : value is the final effect type.
         public int rank;
         public EffectHitInfo[] hits;
         public Direction weaponDirection;
@@ -145,6 +152,126 @@ public class GameManager : MonoBehaviour
         playerControlModes[3] = ControlMode.AI;
     }
 
+    IEnumerator ProcessDuelQueue()
+    {
+        _duelQueueRunning = true;
+        
+        while (_duelQueue.Count > 0)
+        {
+            var duelEvt = _duelQueue.Dequeue();
+            yield return StartCoroutine(HandleSingleDuel(duelEvt));
+        }
+        
+        yield return new WaitUntil(() => _allDuelsResolved);
+        
+        if (effectQueue.Count > 0)
+            yield return StartCoroutine(ProcessEffectQueue());
+        
+        _duelQueueRunning = false;
+        _allDuelsResolved = false;
+        isDuelInProgress = false;
+        StartSelectionPhase(_lastServerState);
+    }
+
+    IEnumerator HandleSingleDuel(EffectEvent evt)
+    {
+        int playerId = evt.playerId;
+        List<int> participants = evt.participants;
+        
+        Debug.Log($"⚔️ Duel Visuel lancé ! Participants: {string.Join(", ", participants)}");
+                isDuelInProgress = true;
+                // 1. AFFICHER LA PIÈCE QUI TOURNE
+                GameObject coinFX = GameObject.CreatePrimitive(PrimitiveType.Sphere); // Ou un modèle 3D de pièce
+                coinFX.name = "DuelCoin_FX";
+
+                // Positionne la pièce au-dessus du centre de la case
+                Vector3 duelCellPos = gridManager.GetCellWorldPosition(
+                    _lastServerState.Players.First(p => p.ID == playerId).Row, // Position logique du joueur
+                    _lastServerState.Players.First(p => p.ID == playerId).Col
+                );
+                // On la place au-dessus des joueurs et on la met debout (rotation sur X)
+                coinFX.transform.position = duelCellPos + Vector3.up * 1.8f;
+                coinFX.transform.localScale = new Vector3(0.4f, 0.02f, 0.4f); // Plat comme une pièce
+                coinFX.transform.rotation = Quaternion.Euler(90f, 0f, 0f); 
+                coinFX.GetComponent<Renderer>().material.color = new Color(1f, 0.84f, 0f);
+
+                // Simple animation de rotation
+                StartCoroutine(RotateCoin(coinFX.transform));
+
+                yield return null;
+
+                var duel = _lastServerState.CurrentDuels.First(d => d.PlayerIDs.Contains(playerId));
+                bool isHumanInvolved = participants.Contains(localPlayerID) && playerControlModes[localPlayerID] == ControlMode.Human;
+                Dictionary<int, int> duelChoices = new Dictionary<int, int>();
+
+                // 2. DÉCLENCHER LA POPUP UI (Si le joueur est humain et participant)
+                if (isHumanInvolved)
+                {
+                    int humanChoice = 0; // 0 = Or, 1 = Argent
+                    bool choiceDone = false;
+                    Debug.Log($"Popup Flip Coin pour Joueur {localPlayerID + 1}");
+                    DuelUIManager.Instance.StartDuel(async (choice) =>
+                            {
+                                humanChoice = choice;
+                                duelChoices.Add(localPlayerID, humanChoice);
+                                choiceDone = true;
+
+                                // Assigner le choix inverse à l'autre joueur (l'IA)
+                                int otherPlayerId = participants.First(p => p != localPlayerID);
+                                duelChoices.Add(otherPlayerId, humanChoice == 0 ? 1 : 0);
+                    
+                                 // Envoyer le choix au serveur
+                                string json = Newtonsoft.Json.JsonConvert.SerializeObject(new {
+                                    op = "duel_choice",
+                                    duelId = duel.DuelId, // Tu peux utiliser l'index du duel ou un ID serveur
+                                    playerId = localPlayerID,
+                                    duelChoices = duelChoices
+                                });
+                                await networkClient.Send(json);
+                            });
+
+                    while (!choiceDone) yield return null;
+                }
+                else
+                {
+                    yield return new WaitForSeconds(1f); 
+                    duelChoices.Add(participants[0], 0);
+                    duelChoices.Add(participants[1], 1);
+                    string json = Newtonsoft.Json.JsonConvert.SerializeObject(new
+                    {
+                        op = "duel_choice",
+                        duelId = duel.DuelId, // Tu peux utiliser l'index du duel ou un ID serveur
+                        playerId = playerId,
+                        duelChoices = duelChoices
+                    });
+                    _ = networkClient.Send(json);
+
+                    
+                }
+
+                 bool thisResultReceived = false;
+                bool thisIsGold = false;
+                int thisWinnerId = -1, thisLoserId = -1, thisHealthBeforeProcess = -1;
+                Position thisLoserPos = default;
+                
+                _pendingDuelResultCallback = (isGold, winnerId, loserId, loserPos, healthBeforeProcess) => {
+                    thisIsGold = isGold;
+                    thisWinnerId = winnerId;
+                    thisLoserId = loserId;
+                    thisLoserPos = loserPos;
+                    thisHealthBeforeProcess = healthBeforeProcess;
+                    thisResultReceived = true;
+                };
+                
+                 yield return new WaitUntil(() => thisResultReceived);
+
+                Destroy(coinFX);
+
+                // Spin + push pour CE duel
+                yield return StartCoroutine(DuelUIManager.Instance.SpinCoinAndClose(thisIsGold));
+                yield return StartCoroutine(ResolveDuelAnimation(thisWinnerId, thisLoserId, thisLoserPos, thisHealthBeforeProcess));
+    }
+    
     IEnumerator ProcessEffectQueue()
     {
         isProcessingEffects = true;
@@ -153,8 +280,18 @@ public class GameManager : MonoBehaviour
         while (effectQueue.Count > 0)
         {
             EffectEvent evt = effectQueue.Dequeue();
-            yield return StartCoroutine(OnEffectAppliedCoroutine(evt.playerId, evt.effectType, 
-                                                                evt.value, evt.rank, evt.hits, evt.newHealth, evt.weaponDirection, evt.participants));
+            if(evt.effectType == EffectType.CollisionDuel)
+            {
+                _duelQueue.Enqueue(evt);
+                if (!_duelQueueRunning)
+                    StartCoroutine(ProcessDuelQueue());
+            }
+            else
+            {
+                yield return StartCoroutine(OnEffectAppliedCoroutine(evt.playerId, evt.effectType,
+                                                        evt.value, evt.rank, evt.hits, evt.newHealth, evt.weaponDirection, evt.participants));
+            }
+
         }
         while (removeEffectQueue.Count > 0)
         {
@@ -177,6 +314,9 @@ public class GameManager : MonoBehaviour
         yield return new WaitForSeconds(rank * 0.5f); 
         // Tu récupères le joueur et tu joues l'animation
         GameObject playerObj = players[playerId];
+        int launcherCol = -1;
+        float mSpeed = 0f;
+        
         switch(effectType)
         {
             case EffectType.HealthPotion:
@@ -185,7 +325,7 @@ public class GameManager : MonoBehaviour
                 for (int i = 0; i < 5; i++)
                 {
                     GameObject healParticle = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                    healParticle.transform.position = playerObj.transform.position + Random.insideUnitSphere * 0.5f;
+                    healParticle.transform.position = playerObj.transform.position + UnityEngine.Random.insideUnitSphere * 0.5f;
                     healParticle.transform.localScale = new Vector3(0.2f, 0.2f, 0.2f);
                     healParticle.GetComponent<Renderer>().material.color = Color.green;
 
@@ -200,7 +340,7 @@ public class GameManager : MonoBehaviour
                 for (int i = 0; i < 5; i++)
                 {
                     GameObject healParticle = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                    healParticle.transform.position = playerObj.transform.position + Random.insideUnitSphere * 0.5f;
+                    healParticle.transform.position = playerObj.transform.position + UnityEngine.Random.insideUnitSphere * 0.5f;
                     healParticle.transform.localScale = new Vector3(0.2f, 0.2f, 0.2f);
                     healParticle.GetComponent<Renderer>().material.color = Color.blue;
 
@@ -216,7 +356,7 @@ public class GameManager : MonoBehaviour
                 Vector3 originalPos = playerObj.transform.position;
                 for (int i = 0; i < 3; i++)
                 {
-                    playerObj.transform.position += Random.insideUnitSphere * 0.1f;
+                    playerObj.transform.position += UnityEngine.Random.insideUnitSphere * 0.1f;
                     yield return new WaitForEndOfFrame();
                 }
                 playerObj.transform.position = originalPos;
@@ -252,9 +392,9 @@ public class GameManager : MonoBehaviour
                         // On ajoute de la variation pour faire un "cône"
                         // On dévie la direction de base un peu vers l'avant/arrière (Z) et haut/bas (Y)
                         Vector3 spread = new Vector3(
-                            baseDir.x, 
-                            Random.Range(-0.2f, 0.2f), // Dispersion verticale
-                            Random.Range(-0.8f, 0.8f)  // Dispersion largeur (Z) sur 3 cases
+                            baseDir.x,
+                            UnityEngine.Random.Range(-0.2f, 0.2f), // Dispersion verticale
+                            UnityEngine.Random.Range(-0.8f, 0.8f)  // Dispersion largeur (Z) sur 3 cases
                         );
 
                         // On lance le mouvement (3 cases = environ cellSize * 3)
@@ -298,9 +438,35 @@ public class GameManager : MonoBehaviour
                 }
                 break;
 
+            case EffectType.LaserV:
+               int laserCol = value; // col du lanceur
+
+                    // 1. Créer le faisceau laser vertical
+                    GameObject beamV = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                    beamV.GetComponent<Renderer>().material.color = new Color(1f, 0f, 1f, 0.8f); // Magenta pour différencier du H
+
+                    // Positionner au centre de la colonne
+                    float gridCenterZ = (gridManager.GetCellWorldPosition(0, laserCol).z + gridManager.GetCellWorldPosition(gridManager.rows - 1, laserCol).z) / 2f;
+                    Vector3 beamPosV = new Vector3(playerObj.transform.position.x, playerObj.transform.position.y + 0.5f, gridCenterZ);
+                    beamV.transform.position = beamPosV;
+
+                    // Redimensionner pour couvrir toute la hauteur
+                    float totalHeight = Mathf.Abs(gridManager.GetCellWorldPosition(gridManager.rows - 1, laserCol).z - gridManager.GetCellWorldPosition(0, laserCol).z);
+                    beamV.transform.localScale = new Vector3(0.05f, 0.02f, totalHeight); // X et Z inversés vs horizontal
+
+                    yield return new WaitForSeconds(0.8f);
+                    Destroy(beamV);
+
+                    // 2. Mettre à jour les joueurs sur la colonne
+                    foreach (var hit in hits)
+                    {
+                        UpdatePlayerHealthBar(hit.PlayerId, hit.NewHealth);
+                    }
+                break;
+
             case EffectType.Missile:
                 int mRow = value;
-                int launcherCol = _lastServerState.Players[playerId].Col;
+                launcherCol = _lastServerState.Players[playerId].Col;
                 float startX = playerObj.transform.position.x;
 
                 // --- Trouver les X d'arrêt pour le visuel ---
@@ -327,7 +493,7 @@ public class GameManager : MonoBehaviour
                 GameObject mLeft = Instantiate(mRight, mRight.transform.position, mRight.transform.rotation);
 
                 // 2. Animation de déplacement simultanée
-                float mSpeed = 15f;
+                mSpeed = 15f;
                 while (mRight.transform.position.x < stopXRight || mLeft.transform.position.x > stopXLeft)
                 {
                     if (mRight.transform.position.x < stopXRight)
@@ -348,9 +514,59 @@ public class GameManager : MonoBehaviour
                 }
                 break;
 
+             case EffectType.MissileV:
+                int mCol = value;
+                int launcherRow = _lastServerState.Players[playerId].Row;
+                float startZ = playerObj.transform.position.z;
+
+                // // --- Trouver les X d'arrêt pour le visuel ---
+                float stopZUp = gridManager.GetCellWorldPosition(0, mCol).z; // row 0 = haut
+                float stopZDown = gridManager.GetCellWorldPosition(gridManager.rows - 1, mCol).z; // dernière row = bas
+
+
+                // // On cherche les cibles réelles dans le GameState pour arrêter les missiles dessus
+                foreach (var p in _lastServerState.Players)
+                {
+                    if (p.ID == playerId || !p.IsAlive || p.Col != mCol) continue;
+                    float pZ = gridManager.GetCellWorldPosition(p.Row, p.Col).z;
+                    if (p.Row < _lastServerState.Players[playerId].Row && pZ > stopZUp) stopZUp = pZ;
+                    if (p.Row > _lastServerState.Players[playerId].Row && pZ < stopZDown) stopZDown = pZ;
+                }
+
+                // // 1. Lancement des deux projectiles
+                GameObject mUp = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+                mUp.transform.position = playerObj.transform.position + Vector3.up * 0.5f;
+                mUp.transform.localScale = new Vector3(0.2f, 0.2f, 0.6f); // allongé sur Z
+                mUp.transform.rotation = Quaternion.Euler(90, 0, 0); // orienté Z
+                mUp.GetComponent<Renderer>().material.color = Color.yellow;
+
+                GameObject mDown = Instantiate(mUp, mUp.transform.position, mUp.transform.rotation);
+
+                // // 2. Animation de déplacement simultanée
+                mSpeed = 15f;
+                while (mUp.transform.position.z < stopZUp || mDown.transform.position.z > stopZDown)
+                {
+                    if (mUp.transform.position.z < stopZUp)
+                        mUp.transform.position += Vector3.forward * mSpeed * Time.deltaTime;
+
+                    if (mDown.transform.position.z > stopZDown)
+                        mDown.transform.position += Vector3.back * mSpeed * Time.deltaTime;
+
+                    yield return null;
+                }
+
+                // // 3. Explosion et Update
+                Destroy(mUp); Destroy(mDown);
+
+                foreach (var hit in hits)
+                {
+                    UpdatePlayerHealthBar(hit.PlayerId, hit.NewHealth);
+                }
+                break;
+
             case EffectType.Freeze:
                 Debug.Log($"[Anim] Freeze Joueur {playerId+1}");
-               Renderer playerRend = playerObj.GetComponent<Renderer>();
+                Renderer playerRend = playerObj.GetComponent<Renderer>();
                 // On garde la couleur originale en mémoire (optionnel, mais utile si tu veux la restaurer pile poil)
                 // Color originalColor = playerRend.material.color; 
 
@@ -378,7 +594,7 @@ public class GameManager : MonoBehaviour
                 for (int i = 0; i < 5; i++)
                 {
                     GameObject poisonParticle = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                    poisonParticle.transform.position = playerObj.transform.position + Random.insideUnitSphere * 0.5f;
+                    poisonParticle.transform.position = playerObj.transform.position + UnityEngine.Random.insideUnitSphere * 0.5f;
                     poisonParticle.transform.localScale = new Vector3(0.2f, 0.2f, 0.2f);
                     poisonParticle.GetComponent<Renderer>().material.color = new Color(0.8f, 0.2f, 0.8f); // Violet foncé
 
@@ -391,34 +607,37 @@ public class GameManager : MonoBehaviour
 
             case EffectType.Armor:
                 Debug.Log($"[Anim] Armor Joueur {playerId+1}");
-                // Anim : bouclier lumineux
-                // 1. Créer le bouclier (une sphère autour du joueur)
-                GameObject shieldSphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                shieldSphere.name = "Armor_FX";
-                shieldSphere.transform.parent = playerObj.transform;
-                shieldSphere.transform.localPosition = Vector3.zero;
-                shieldSphere.transform.localScale = Vector3.one * 1.5f;
-
-                // 2. Configurer le matériau du bouclier
-                Material shieldMat = new Material(Shader.Find("Legacy Shaders/Transparent/Diffuse"));
-                shieldMat.color = new Color(0.1f, 0.4f, 1f, 0.6f); // Bleu plus foncé, moins transparent
-                shieldSphere.GetComponent<Renderer>().material = shieldMat;
-
-                // 3. Animation de pulsation (pour montrer que le bouclier est actif)
-                float pulseDuration = 0.5f;
-                float timer = 0f;
-                Vector3 originalScale = shieldSphere.transform.localScale;
-
-                while (timer < pulseDuration)
+                if (!IsPlayerInvisible(playerId) || playerId == localPlayerID)
                 {
-                    float scaleMultiplier = 1f + Mathf.PingPong(timer * 2, 0.1f);
-                    shieldSphere.transform.localScale = originalScale * scaleMultiplier;
-                    timer += Time.deltaTime;
-                    yield return null;
-                }
+                    // Anim : bouclier lumineux
+                    // 1. Créer le bouclier (une sphère autour du joueur)
+                    GameObject shieldSphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                    shieldSphere.name = "Armor_FX";
+                    shieldSphere.transform.parent = playerObj.transform;
+                    shieldSphere.transform.localPosition = Vector3.zero;
+                    shieldSphere.transform.localScale = Vector3.one * 1.5f;
 
-                // Le bouclier reste à sa taille normale après la pulsation
-                shieldSphere.transform.localScale = originalScale;
+                    // 2. Configurer le matériau du bouclier
+                    Material shieldMat = new Material(Shader.Find("Legacy Shaders/Transparent/Diffuse"));
+                    shieldMat.color = new Color(0.1f, 0.4f, 1f, 0.6f); // Bleu plus foncé, moins transparent
+                    shieldSphere.GetComponent<Renderer>().material = shieldMat;
+
+                    // 3. Animation de pulsation (pour montrer que le bouclier est actif)
+                    float pulseDuration = 0.5f;
+                    float timer = 0f;
+                    Vector3 originalScale = shieldSphere.transform.localScale;
+
+                    while (timer < pulseDuration)
+                    {
+                        float scaleMultiplier = 1f + Mathf.PingPong(timer * 2, 0.1f);
+                        shieldSphere.transform.localScale = originalScale * scaleMultiplier;
+                        timer += Time.deltaTime;
+                        yield return null;
+                    }
+
+                    // Le bouclier reste à sa taille normale après la pulsation
+                    shieldSphere.transform.localScale = originalScale;
+                }
                 break;
 
             case EffectType.Random:
@@ -449,97 +668,27 @@ public class GameManager : MonoBehaviour
                 yield return new WaitForSeconds(0.5f);
                 break;
                 
-            case EffectType.CollisionDuel:
-                 Debug.Log($"⚔️ Duel Visuel lancé ! Participants: {string.Join(", ", participants)}");
-                if (isDuelInProgress) yield break; // Évite les doublons
-                isDuelInProgress = true;
-                // 1. AFFICHER LA PIÈCE QUI TOURNE
-                GameObject coinFX = GameObject.CreatePrimitive(PrimitiveType.Sphere); // Ou un modèle 3D de pièce
-                coinFX.name = "DuelCoin_FX";
-
-                // Positionne la pièce au-dessus du centre de la case
-                Vector3 duelCellPos = gridManager.GetCellWorldPosition(
-                    _lastServerState.Players.First(p => p.ID == playerId).Row, // Position logique du joueur
-                    _lastServerState.Players.First(p => p.ID == playerId).Col
-                );
-                // On la place au-dessus des joueurs et on la met debout (rotation sur X)
-                coinFX.transform.position = duelCellPos + Vector3.up * 1.8f;
-                coinFX.transform.localScale = new Vector3(0.4f, 0.02f, 0.4f); // Plat comme une pièce
-                coinFX.transform.rotation = Quaternion.Euler(90f, 0f, 0f); 
-                coinFX.GetComponent<Renderer>().material.color = new Color(1f, 0.84f, 0f);
-
-                // Simple animation de rotation
-                StartCoroutine(RotateCoin(coinFX.transform));
-
-                var duel = _lastServerState.CurrentDuels.First(d => d.PlayerIDs.Contains(playerId));
-                bool isHumanInvolved = participants.Contains(localPlayerID) && playerControlModes[localPlayerID] == ControlMode.Human;
-                Dictionary<int, int> duelChoices = new Dictionary<int, int>();
-
-                // 2. DÉCLENCHER LA POPUP UI (Si le joueur est humain et participant)
-                if (isHumanInvolved)
+            case EffectType.Invisibility:
+                if (playerId != localPlayerID) // les autres le voient disparaître
                 {
-                    int humanChoice = 0; // 0 = Or, 1 = Argent
-                    bool choiceDone = false;
-                    Debug.Log($"Popup Flip Coin pour Joueur {localPlayerID + 1}");
-                    DuelUIManager.Instance.StartDuel(async (choice) =>
-                            {
-                                humanChoice = choice;
-                                duelChoices.Add(localPlayerID, humanChoice);
-                                choiceDone = true;
-
-                                // Assigner le choix inverse à l'autre joueur (l'IA)
-                                int otherPlayerId = participants.First(p => p != localPlayerID);
-                                duelChoices.Add(otherPlayerId, humanChoice == 0 ? 1 : 0);
-                    
-                                 // Envoyer le choix au serveur
-                                string json = Newtonsoft.Json.JsonConvert.SerializeObject(new {
-                                    op = "duel_choice",
-                                    duelId = duel.DuelId, // Tu peux utiliser l'index du duel ou un ID serveur
-                                    playerId = localPlayerID,
-                                    duelChoices = duelChoices
-                                });
-                                await networkClient.Send(json);
-                            });
-
-                    while (!choiceDone) yield return null;
-
-
+                    // Fondu vers transparent
+                    yield return StartCoroutine(FadePlayer(playerObj, 1f, 0f, 0.5f));
                 }
-                else
+                else // le joueur lui-même : reste visible mais teinte blanche
                 {
-                    duelChoices.Add(participants[0], 0);
-                    duelChoices.Add(participants[1], 1);
-                    string json = Newtonsoft.Json.JsonConvert.SerializeObject(new
-                    {
-                        op = "duel_choice",
-                        duelId = duel.DuelId, // Tu peux utiliser l'index du duel ou un ID serveur
-                        playerId = playerId,
-                        duelChoices = duelChoices
-                    });
-                    yield return new WaitForSeconds(1.5f);
-                    networkClient.Send(json);
+                    SetPlayerTint(playerObj, Color.white);
+                    // ou une légère transparence pour indiquer l'état
+                    //yield return StartCoroutine(FadePlayer(playerObj, 1f, 0.35f, 0.5f));
                 }
-
-                //si outJsonAIDuel exist, alors faudrait call une async fct 
-                //OnServerMessage(string json)
-
-                // if (!isHumanInvolved)
-                // {
-                //     duelChoices.Add(participants[0], 0);
-                //     duelChoices.Add(participants[1], 1);
-
-                //     // Petite pause pour simuler la tension du duel
-                //     yield return new WaitForSeconds(2.0f); 
-                // }
-
-                //yield return new WaitForSeconds(5.0f); // Simule le temps du choix du joueur + flip
-
-                // 4. NETTOYER L'ANIMATION DE LA PIÈCE
-                Destroy(coinFX);
- 
-                //yield return StartCoroutine(ResolveDuel(playerId, duelChoices, participants));
                 break;
         }
+    }
+
+    bool IsPlayerInvisible(int playerId)
+    {
+        if (_lastServerState == null) return false;
+        var p = _lastServerState.Players.Any(p => p.ID == playerId);
+        return p && _lastServerState.Players.First(p => p.ID == playerId).InvisibilityRemaining > 0;
     }
 
     IEnumerator MoveSprayParticle(GameObject p, Vector3 dir, float distance)
@@ -569,7 +718,7 @@ public class GameManager : MonoBehaviour
         Destroy(p);
     }
  
-    IEnumerator ResolveDuelAnimation(int winnerId, int loserId, Position loserNewPos)
+    IEnumerator ResolveDuelAnimation(int winnerId, int loserId, Position loserNewPos, int healthBeforeProcess)
     { 
         // 1. Récupérer les GameObjects des joueurs
         GameObject winnerObj = players[winnerId];
@@ -600,6 +749,7 @@ public class GameManager : MonoBehaviour
         float slideDuration = 0.3f;
         float t = 0f;
         Vector3 startPos = loserObj.transform.position;
+        UpdatePlayerHealthBar(loserId, healthBeforeProcess);
 
         while (t < 1f)
         {
@@ -626,8 +776,12 @@ public class GameManager : MonoBehaviour
             case EffectType.Freeze:
                 Debug.Log($"[Anim] Freeze Removed Joueur {playerId+1}");
                 Transform cube = playerObj.transform.Find("IceCube_FX");
-                if (cube != null) Destroy(cube.gameObject);
-
+                //if (cube != null) Destroy(cube.gameObject);
+                foreach (Transform child in playerObj.transform)
+                {
+                    if (child.name == "IceCube_FX")
+                        Destroy(child.gameObject);
+                }
                 // Remettre la VRAIE couleur du joueur (pas forcément blanc)
                 Renderer pRend = playerObj.GetComponent<Renderer>();
                 pRend.material.color = GetPlayerColor(playerId); // Utilise ta fonction existante
@@ -635,8 +789,17 @@ public class GameManager : MonoBehaviour
 
             case EffectType.Armor:
                 Debug.Log($"[Anim] Armor Removed Joueur {playerId+1}");
-                Transform shield = playerObj.transform.Find("Armor_FX");
-                if (shield != null) Destroy(shield.gameObject);
+                foreach (Transform child in playerObj.transform)
+                {
+                    if (child.name == "Armor_FX")
+                        Destroy(child.gameObject);
+                }
+                break;
+
+            case EffectType.Invisibility:
+                Color original = playerObj.GetComponent<Player>().originalColor;
+                yield return StartCoroutine(FadePlayer(playerObj, 0f, 1f, 0.5f)); // réapparition en fondu
+                SetPlayerTint(playerObj, original);
                 break;
         }
         yield return null; 
@@ -654,6 +817,50 @@ public class GameManager : MonoBehaviour
         }
     }
 
+    void SetPlayerTint(GameObject obj, Color color)
+    {
+        Renderer rend = obj.GetComponent<Renderer>();
+        if (rend != null)
+            rend.material.color = color;
+    }
+
+    IEnumerator FadePlayer(GameObject obj, float from, float to, float duration)
+    {
+        if (obj.transform.Find("Armor_FX") != null)
+        {
+            Transform armor = obj.transform.Find("Armor_FX");
+            Renderer armorRend = armor.GetComponent<Renderer>();
+            Color armorColor = armorRend.material.color;
+            StartCoroutine(FadeMaterial(armorRend, from, to, duration));
+        }
+        var renderer = obj.GetComponent<Renderer>();
+        float elapsed = 0f;
+        Color c = renderer.material.color;
+        while (elapsed < duration)
+        {
+            elapsed += Time.deltaTime;
+            c.a = Mathf.Lerp(from, to, elapsed / duration);
+            renderer.material.color = c;
+            yield return null;
+        }
+        c.a = to;
+        renderer.material.color = c;
+    }
+
+    IEnumerator FadeMaterial(Renderer rend, float from, float to, float duration)
+    {
+        float elapsed = 0f;
+        Color c = rend.material.color;
+        while (elapsed < duration)
+        {
+            elapsed += Time.deltaTime;
+            c.a = Mathf.Lerp(from, to, elapsed / duration);
+            rend.material.color = c;
+            yield return null;
+        }
+        c.a = to;
+        rend.material.color = c;
+    }
     void InitializeHealthUI()
     {
         if (playerHealthSliders == null || playerHealthSliders.Length < 4) 
@@ -781,7 +988,7 @@ public class GameManager : MonoBehaviour
     void SpawnPlayers()
     {
         players = new GameObject[4];
-         int[] playerCols = new int[4];
+        int[] playerCols = new int[4];
         playerCols[0] = 2;           // 2 cellules du bord gauche
         playerCols[1] = playerCols[0] + 5;  // +4 cellules
         playerCols[2] = playerCols[1] + 5;  // +4 cellules
@@ -804,7 +1011,17 @@ public class GameManager : MonoBehaviour
             if (rend != null)
             {
                 Color[] colors = { Color.red, Color.blue, Color.green, Color.yellow };
+                rend.material.SetFloat("_Mode", 2); // 2 = Fade
+                rend.material.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+                rend.material.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                rend.material.SetInt("_ZWrite", 0);
+                rend.material.DisableKeyword("_ALPHATEST_ON");
+                rend.material.EnableKeyword("_ALPHABLEND_ON");
+                rend.material.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+                rend.material.renderQueue = 3000;
+                
                 rend.material.color = colors[i];
+                players[i].GetComponent<Player>().originalColor = colors[i];
             }
         }
         hasDoneSpawnPlayers = true;
@@ -927,8 +1144,8 @@ public class GameManager : MonoBehaviour
     {
         selectionTimer = Mathf.Max(0f, selectionTimer - Time.deltaTime);
 
-        if (timerText != null)
-            timerText.text = $"CHOISISSEZ ! {Mathf.Max(0, selectionTimer):F1}s";
+        if (centralText != null)
+            centralText.text = $"CHOISISSEZ ! {Mathf.Max(0, selectionTimer):F1}s";
         
         if (timerSlider != null && !isDuelInProgress)
                 timerSlider.value = selectionTimer / selectionTime;
@@ -1044,6 +1261,7 @@ public class GameManager : MonoBehaviour
         // Pour l'instant, on teste juste la réception
         if (json.Contains("game_start"))
         {
+            Debug.Log("=== MATCH FOUND RECEIVED ===");
             var root = Newtonsoft.Json.Linq.JObject.Parse(json);
             GameState initialState = Newtonsoft.Json.JsonConvert.DeserializeObject<GameState>(
                 root["state"].ToString()
@@ -1132,52 +1350,87 @@ public class GameManager : MonoBehaviour
             Position loserNewPos = Newtonsoft.Json.JsonConvert.DeserializeObject<Position>(root["loserNewPos"].ToString());
             GameState newState = Newtonsoft.Json.JsonConvert.DeserializeObject<GameState>(root["state"].ToString());
             List<GameEventData> events = Newtonsoft.Json.JsonConvert.DeserializeObject<List<GameEventData>>(root["events"].ToString());
+            
+            int healthBeforeProcess = root["loserHealthBeforeProcess"].ToObject<int>();
 
             effectQueue.Clear();
             foreach (var evt in events)
             {
-                effectQueue.Enqueue(new EffectEvent
+                if(evt.NewHealth == -1)//-1 code dans le NewHealth means "juste remove the effect, no damage number to show" tmp code ?
                 {
-                    playerId = evt.PlayerId,
-                    launcherPlayerId = evt.LauncherId,
-                    effectType = evt.Type,
-                    value = evt.Row,
-                    rank = evt.Rank,
-                    hits = evt.Hits,
-                    newHealth = evt.NewHealth,
-                    weaponDirection = evt.WeaponDirection,
-                    participants = evt.Participants
-                });
+                    removeEffectQueue.Enqueue(new EffectEvent
+                    {
+                        playerId = evt.PlayerId,
+                        effectType = evt.Type,
+                        rank = evt.Rank
+                    });
+                }
+                else
+                {
+                    effectQueue.Enqueue(new EffectEvent
+                    {
+                        playerId = evt.PlayerId,
+                        launcherPlayerId = evt.LauncherId,
+                        effectType = evt.Type,
+                        value = evt.Row,
+                        rank = evt.Rank,
+                        hits = evt.Hits,
+                        newHealth = evt.NewHealth,
+                        weaponDirection = evt.WeaponDirection,
+                        participants = evt.Participants
+                    });
+                }
             }
 
             // Mettre à jour l'état local
-            _lastServerState = newState; 
-            StartCoroutine(DuelSequence(isGold == 0, winnerId, loserId, loserNewPos)); 
+            _lastServerState = newState;
+
+            bool allDone = root["allDuelsResolved"].ToObject<bool>();
+            if (allDone) _allDuelsResolved = true;
+
+            _pendingDuelResultCallback?.Invoke(isGold == 0, winnerId, loserId, loserNewPos, healthBeforeProcess);
+            _pendingDuelResultCallback = null;
+
+            //StartCoroutine(DuelSequence(isGold == 0, winnerId, loserId, loserNewPos)); 
+        }
+        else if (json.Contains("game_over"))
+        {
+            var root = Newtonsoft.Json.Linq.JObject.Parse(json);
+            string winnerName = root["winnerName"].ToObject<string>();
+            
+            centralText.gameObject.SetActive(true);
+            centralText.text = $"{winnerName} wins !";
+            exitButton.gameObject.SetActive(true);
+            OnExitClicked();
         }
     }
 
-    IEnumerator DuelSequence(bool isGold, int winnerId, int loserId, Position loserNewPos)
-    {
-        // 1. Spin de la pièce
-        yield return StartCoroutine(DuelUIManager.Instance.SpinCoinAndClose(isGold));
+    // IEnumerator DuelSequence(bool isGold, int winnerId, int loserId, Position loserNewPos)
+    // {
+    //     // 1. Spin de la pièce
+    //     yield return StartCoroutine(DuelUIManager.Instance.SpinCoinAndClose(isGold));
         
-        // 2. Ensuite seulement : anim du push
-        yield return StartCoroutine(ResolveDuelAnimation(winnerId, loserId, loserNewPos));
+    //     // 2. Ensuite seulement : anim du push
+    //     yield return StartCoroutine(ResolveDuelAnimation(winnerId, loserId, loserNewPos));
         
-        if (effectQueue.Count > 0)
-        {
-            yield return StartCoroutine(ProcessEffectQueue());
-        }
-        // 3. FINI : on peut reset
-        isDuelInProgress = false;
+    //     yield return new WaitUntil(() => _allDuelsResolved);
         
-        // 4. Relancer la phase de sélection
-        StartSelectionPhase(_lastServerState);
-        //StartCoroutine(SyncUnityWithEngine(newState, topRow, futureRow));
-    }
+    //     if (effectQueue.Count > 0)
+    //     {
+    //         yield return StartCoroutine(ProcessEffectQueue());
+    //     }
+    //     // 3. FINI : on peut reset
+    //     isDuelInProgress = false;
+    //     _allDuelsResolved = false;
+
+    //     // 4. Relancer la phase de sélection
+    //     StartSelectionPhase(_lastServerState);
+    //     //StartCoroutine(SyncUnityWithEngine(newState, topRow, futureRow));
+    // }
 
     IEnumerator SyncUnityWithEngine(GameState state, CellEffect[] topRow, CellEffect[] futureRow)
     {
+        Debug.Log("=== SYNC UNITY START ===");
             // 1. Désactiver les choix visuels (cyan/jaune)
         ClearHighlights();
 
@@ -1276,13 +1529,15 @@ public class GameManager : MonoBehaviour
             }
         }
 
-            // 5. Vérifier la fin de partie
-        int survivors = state.Players.Count(p => p.IsAlive);
-        if (survivors <= 1)
+    
+        var deadLocalPlayer = state.Players.FirstOrDefault(p => p.ID == localPlayerID && !p.IsAlive);
+        if (deadLocalPlayer.Name != null)//tmp
         {
-            var winner = state.Players.FirstOrDefault(p => p.IsAlive);
-            timerText.text = $"FIN ! Vainqueur: Joueur {winner.ID + 1}";
-            yield break; // On arrête la boucle du jeu
+            centralText.gameObject.SetActive(true);
+            centralText.text = $"you lose";
+            exitButton.gameObject.SetActive(true);
+            // OnExitClicked();
+            // yield break;
         }
 
         if(!isDuelInProgress)
@@ -1290,6 +1545,25 @@ public class GameManager : MonoBehaviour
             StartSelectionPhase(state);
     }
     
+    public void OnExitClicked()
+    {
+        // Compter les humains vivants autres que moi
+        int otherHumans = _lastServerState.Players.Count(p => p.ID != localPlayerID && !p.IsAI && p.IsAlive);
+        
+        if (otherHumans > 0)
+        {
+            // Il reste des humains — juste quitter sans killer la partie
+            _ = networkClient.Send(Newtonsoft.Json.JsonConvert.SerializeObject(new { op = "player_quit", playerId = localPlayerID }));
+            UnityEngine.SceneManagement.SceneManager.LoadScene("MainMenu");
+        }
+        else
+        {
+            // Solo ou que des IA restants — kill proprement
+            StopAllCoroutines();
+            UnityEngine.SceneManagement.SceneManager.LoadScene("MainMenu");
+        }
+    }
+
     IEnumerator ReboundAnimation(GameObject player, Vector2Int intended, Vector2Int actual)
     {
         // 1. Saut vers la case centrale (la cible cliquée)
@@ -1386,7 +1660,7 @@ public class GameManager : MonoBehaviour
         var radius = 3; // Rayon de sélection par défaut
         if(_lastServerState != null)
         {
-            var pState = _lastServerState.Players.FirstOrDefault(p => p.ID == localPlayerID);
+            var pState = _lastServerState.Players.FirstOrDefault(p => p.ID == playerIndex);
             if (pState.MegaJumpTurnsRemaining > 0)
             {
                 radius = 8;
@@ -1454,8 +1728,19 @@ public class GameManager : MonoBehaviour
                         score = 10f;
                     break;
 
+                case EffectType.Random:
+                        score = 20f;
+                    break;
+
+                case EffectType.Invisibility:
+                case EffectType.MegaJump:
+                        score = 70f;
+                    break;
+
                 case EffectType.Missile:
+                case EffectType.MissileV:
                 case EffectType.Laser:
+                case EffectType.LaserV:
                 case EffectType.Spray:
                     score = 75f; // 🟡 On autorise l'IA à prendre le missile pour attaquer les autres
                     break;
@@ -1469,12 +1754,12 @@ public class GameManager : MonoBehaviour
         float bestScore = -9999f;
 
         // 15% de chance de choisir une case aléatoire parmi les 3 meilleures pour éviter l'IA parfaite
-        bool useRandom = Random.value < 0.15f;
+        bool useRandom = UnityEngine.Random.value < 0.000000000015f;
 
         if (useRandom)
         {
             var topCells = cellScores.OrderByDescending(kvp => kvp.Value).Take(3).ToList();
-            bestCell = topCells[Random.Range(0, topCells.Count)].Key;
+            bestCell = topCells[UnityEngine.Random.Range(0, topCells.Count)].Key;
             Debug.Log($"🤖 AI Joueur {playerIndex+1} choisit une case aléatoire pour varier !");
         }
         else

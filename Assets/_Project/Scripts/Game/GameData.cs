@@ -20,12 +20,15 @@ public enum EffectType
     DamageBomb, 
     Poison, 
     Missile,
+    MissileV,
     Armor, 
     Freeze,
     Laser,
+    LaserV,
     Spray,
     Random,
     MegaJump,
+    Invisibility,
     CollisionDuel
 }
 
@@ -110,6 +113,7 @@ public struct PlayerState
     public int ArmorTurnsRemaining;
     public int FreezeTurnsRemaining;
     public int MegaJumpTurnsRemaining;
+    public int InvisibilityRemaining;
     public string Name;
 }
 

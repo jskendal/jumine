@@ -71,15 +71,7 @@ public class MainMenuManager : MonoBehaviour
         //SceneManager.LoadScene(gameSceneName);
         mainMenuPanel.SetActive(false);
         matchmakingPanel.SetActive(true);
-        
-        // if (SimpleWebSocketClient.Instance == null)
-        // {
-        //     // Crée le GameObject s'il n'existe pas (premier lancement)
-        //     var go = new GameObject("WebSocketClient");
-        //     go.AddComponent<SimpleWebSocketClient>();
-        // }
-        //SimpleWebSocketClient.Instance.JoinSolo("Player1");
-        // Lance la simulation d'ajout des IA
+
         StartCoroutine(SimulateSoloMatchmaking());
     }
 
@@ -96,11 +88,12 @@ public class MainMenuManager : MonoBehaviour
         }
 
         // Connexion + envoi de la config Solo
+        SceneManager.LoadScene(gameSceneName);
         wsClient.ConnectAndJoin("join", playerNickname);
 
         // Une fois 4/4 atteint, on charge le jeu
         yield return new WaitForSeconds(0.2f);
-        SceneManager.LoadScene(gameSceneName);
+
     }
     
     public void OnClickMultiplayer()

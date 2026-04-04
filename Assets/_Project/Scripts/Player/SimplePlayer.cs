@@ -14,7 +14,7 @@ public class Player : MonoBehaviour
     public int armorTurns = 0;
     public bool isFrozen = false;
     private bool isPoisoned = false;
-    private float poisonTimer = 0f;
+    public Color originalColor;
     
     public int poisonTurnsRemaining = 0;
     public int poisonDamagePerTurn = 0;
@@ -23,7 +23,7 @@ public class Player : MonoBehaviour
     private float effectTimer = 0f;
     //private BonusMalusType currentEffect = BonusMalusType.HealthPotion;
  
-    private GridManager gridManager;
+    public GridManager gridManager;
 
     [Header("Références")]
     public GameManager gameManager;
@@ -33,6 +33,10 @@ public class Player : MonoBehaviour
         // CreateHealthBar();
         // UpdateHealthUI();
         gameManager = FindObjectOfType<GameManager>();
+    }
+    void Awake()
+    {
+        gridManager = FindObjectOfType<GridManager>();
     }
     
     void Update()
@@ -46,35 +50,27 @@ public class Player : MonoBehaviour
                 //ResetEffect(currentEffect);
             }
         }
-        if (Input.touchCount > 0 && Input.GetTouch(0).phase == TouchPhase.Began)
-        {
-            // Même logique que OnMouseDown()
-            OnMouseDown();
-        }
-    }
-    void Awake()
-    {
-        gridManager = FindObjectOfType<GridManager>();
     }
 
-    void OnMouseDown()
-    {
-        // Sécurité : clamp les coordonnées
-        Vector2Int playerGridPos = gridManager.GetCellFromWorldPosition(transform.position);
-        playerGridPos.x = Mathf.Clamp(playerGridPos.x, 0, gridManager.gridCells.GetLength(0) - 1);
-        playerGridPos.y = Mathf.Clamp(playerGridPos.y, 0, gridManager.gridCells.GetLength(1) - 1);
+
+    // void OnMouseDown()
+    // {
+    //     // Sécurité : clamp les coordonnées
+    //     Vector2Int playerGridPos = gridManager.GetCellFromWorldPosition(transform.position);
+    //     playerGridPos.x = Mathf.Clamp(playerGridPos.x, 0, gridManager.gridCells.GetLength(0) - 1);
+    //     playerGridPos.y = Mathf.Clamp(playerGridPos.y, 0, gridManager.gridCells.GetLength(1) - 1);
         
-        if (playerGridPos.x >= 0 && playerGridPos.y >= 0 &&
-            gridManager.gridCells[playerGridPos.x, playerGridPos.y] != null)
-        {
-            Cell targetCell = gridManager.gridCells[playerGridPos.x, playerGridPos.y].GetComponent<Cell>();
-            targetCell?.OnMouseDown();
-        }
-    }
+    //     if (playerGridPos.x >= 0 && playerGridPos.y >= 0 &&
+    //         gridManager.gridCells[playerGridPos.x, playerGridPos.y] != null)
+    //     {
+    //         Cell targetCell = gridManager.gridCells[playerGridPos.x, playerGridPos.y].GetComponent<Cell>();
+    //         targetCell?.HandleClick();
+    //     }
+    // }
 
-    public bool HasActiveEffects()
-    {
-        // Vérifie si le joueur a des effets actifs
-        return isPoisoned || isFrozen || speedMultiplier != 1f || isInvincible;
-    }
+    // public bool HasActiveEffects()
+    // {
+    //     // Vérifie si le joueur a des effets actifs
+    //     return isPoisoned || isFrozen || speedMultiplier != 1f || isInvincible;
+    // }
 }

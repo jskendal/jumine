@@ -1529,7 +1529,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 0, y: -350}
+  m_AnchoredPosition: {x: 0, y: -395}
   m_SizeDelta: {x: 160, y: 30}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1840229955
@@ -1679,6 +1679,12 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 4b18f84847ddc574ebb67f7a0838f4e4, type: 2}
   - {fileID: 11400000, guid: 3d2c1a9f0029caa49b8fc03dee76f01a, type: 2}
   - {fileID: 11400000, guid: 122a9a1dce1eb7b4d85aea4771625fa7, type: 2}
+  - {fileID: 11400000, guid: 48832db08df3a2f4b8151d04d5ef149a, type: 2}
+  - {fileID: 11400000, guid: b1675765b0250a2479aa9a0cab671ec7, type: 2}
+  - {fileID: 11400000, guid: 156b88b4d5d4c5444905e0be76084173, type: 2}
+  - {fileID: 11400000, guid: 1eb42822913bf754982ea421182133cb, type: 2}
+  - {fileID: 11400000, guid: 741767a054327674f8a08937144c8be8, type: 2}
+  - {fileID: 11400000, guid: 56e2e72a7ababcd47868e4f1f8d5ea51, type: 2}
 --- !u!4 &2052283096
 Transform:
   m_ObjectHideFlags: 0

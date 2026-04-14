@@ -1,6 +1,8 @@
 using UnityEngine;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+
 
 public class GridManager : MonoBehaviour
 {
@@ -17,6 +19,10 @@ public class GridManager : MonoBehaviour
     private bool isGridReady = false;
     
     private HashSet<Vector2Int> selectableCells = new HashSet<Vector2Int>();
+
+    // Variable pour stocker l'état des effets
+    private bool _areCellEffectsHidden = false;
+
 
     void Start()
     {
@@ -73,8 +79,6 @@ public class GridManager : MonoBehaviour
             value = data.value,
             isWeapon = data.isWeapon
         };
-
-
         
         // 2. Trouve la configuration visuelle correspondante à cet effet
         CellEffectData visualConfig = effectVisuals.FirstOrDefault(x => x.effectType == data.type);
@@ -120,7 +124,7 @@ public class GridManager : MonoBehaviour
         cellScript.currentEffect.type = newType;
     }
 
-    public void GenerateFutureRow(CellEffect[] futureData)
+    public void GenerateFutureRow(CellEffect[] futureData, Dictionary<int, bool> playerSightDisabled = null)
     {
         futureRow = new GameObject[columns];
         
@@ -129,6 +133,7 @@ public class GridManager : MonoBehaviour
             GameObject cell = Instantiate(cellPrefab, Vector3.zero, Quaternion.identity, transform);
             cell.name = $"FutureCell_{c}";
             Cell cellScript = cell.GetComponent<Cell>();
+
             cellScript.row = -1;
             cellScript.col = c;
             cell.transform.localPosition = new Vector3(
@@ -138,6 +143,9 @@ public class GridManager : MonoBehaviour
             );
 
             ApplyEffectToCell(cellScript, futureData[c]);
+
+            //ApplySightDisabledEffect(cellScript, playerSightDisabled);
+
             Color baseColor = cellScript.GetComponent<Renderer>().material.color;
             cellScript.SetVisual(baseColor, 0.5f); // <-- C'est ici qu'on la rend transparente      
             
@@ -145,13 +153,8 @@ public class GridManager : MonoBehaviour
         }
     }
 
-    // Permet de récupérer le script Cell d'une coordonnée précise
-    public Cell GetCellScript(int r, int c)
-    {
-        if (gridCells != null && gridCells[r, c] != null)
-            return gridCells[r, c].GetComponent<Cell>();
-        return null;
-    }
+    private Dictionary<Cell, (bool iconActive, Color iconColor)> originalIconStates = new Dictionary<Cell, (bool, Color)>();
+    private Dictionary<Cell, Color> originalBackgroundColors = new Dictionary<Cell, Color>();
 
     public void CenterGrid()
     {
@@ -160,7 +163,7 @@ public class GridManager : MonoBehaviour
         transform.position = new Vector3(-totalWidth / 2f, 0f, -totalHeight / 2f);
     }
     
-    public void InsertRow(CellEffect[] newRowData, CellEffect[] newFutureRowData)
+    public void InsertRow(CellEffect[] newRowData, CellEffect[] newFutureRowData, Dictionary<int, bool> playerSightDisabled = null)
     {
         // 1. Détruire la ligne du bas
         for (int c = 0; c < columns; c++)
@@ -187,7 +190,12 @@ public class GridManager : MonoBehaviour
                 
                     Cell cellScript = gridCells[r, c].GetComponent<Cell>();
                     cellScript.row = r - 1;  // ← NOUVEAU row
-                    cellScript.col = c;  
+                    cellScript.col = c;
+                    int localPlayerId = FindObjectOfType<GameManager>().localPlayerID;
+                    // if (playerSightDisabled != null && playerSightDisabled.ContainsKey(localPlayerId) && playerSightDisabled[localPlayerId])
+                    // {
+                    //     ApplySightDisabledEffect(cellScript, playerSightDisabled);
+                    // }
             }
         }
         
@@ -206,13 +214,35 @@ public class GridManager : MonoBehaviour
 
             ApplyEffectToCell(cellScript, newRowData[c]);
 
+            //ApplySightDisabledEffect(cellScript, playerSightDisabled);
+
             // Rendre opaque
             Color baseColor = cellScript.GetComponent<Renderer>().material.color;
             cellScript.SetVisual(baseColor, 1.0f); 
         }
         
         // 4. Générer une nouvelle future ligne
-        GenerateFutureRow(newFutureRowData);
+        GenerateFutureRow(newFutureRowData, playerSightDisabled);
+
+        //should I enable or disable with allCells ? or use directly FlipCellsAnimation fct ?
+        //FlipCellsAnimation(false);
+        // List<Cell> allCells = new List<Cell>();
+        // for (int r = 0; r < rows; r++)
+        // {
+        //     for (int c = 0; c < columns; c++)
+        //     {
+        //         if (gridCells[r, c] != null)
+        //             allCells.Add(gridCells[r, c].GetComponent<Cell>());
+        //     }
+        // }
+        // foreach (Transform child in transform)
+        // {
+        //     Cell cellScript = child.GetComponent<Cell>();
+        //     if (cellScript != null && cellScript.row == -1)
+        //         allCells.Add(cellScript);
+        // }
+
+        //FlipCellsAnimation(true);
     }
     
     public Vector3 GetCellWorldPosition(int row, int col)
@@ -317,5 +347,212 @@ public class GridManager : MonoBehaviour
             if (c != null) return c.currentEffect;
         }
         return new CellEffect { type = EffectType.Neutral };
+    }
+
+    // Fonction pour masquer les effets (avec animation)
+    public void HideCellEffects(bool rotation = true)
+    {
+        if (_areCellEffectsHidden) return; // Déjà masqué
+
+        _areCellEffectsHidden = true;
+        StartCoroutine(FlipCellsAnimation(true, rotation)); // true = masquer
+    }
+
+    // Fonction pour afficher les effets (avec animation)
+    public void ShowCellEffects(bool rotation = true)
+    {
+        if (!_areCellEffectsHidden) return; // Déjà visible
+
+        _areCellEffectsHidden = false;
+        StartCoroutine(FlipCellsAnimation(false, rotation)); // false = afficher
+        originalBackgroundColors.Clear();
+        originalIconStates.Clear();
+    }
+
+    
+    private void ApplySightDisabledEffect(Cell cellScript, Dictionary<int, bool> playerSightDisabled)
+    {
+        if (playerSightDisabled == null || playerSightDisabled.Count(x=>x.Value == true) == 0) return;
+
+        int localPlayerId = FindObjectOfType<GameManager>().localPlayerID;
+        bool shouldHide = playerSightDisabled.ContainsKey(localPlayerId) && playerSightDisabled[localPlayerId];
+
+        if (cellScript.iconRenderer == null) return;
+
+        if (shouldHide)
+        {
+            // 1. Stocker l'état original de l'icône (si ce n'est pas déjà fait)
+            if (!originalIconStates.ContainsKey(cellScript))
+            {
+                originalIconStates[cellScript] = (
+                    cellScript.iconRenderer.gameObject.activeSelf,
+                    cellScript.iconRenderer.color
+                );
+            }
+            cellScript.SetVisual(new Color(0.3f, 0.3f, 0.3f, 0.5f), 1f);
+            // 2. Masquer l'icône (désactiver + transparence)
+            cellScript.iconRenderer.gameObject.SetActive(false);
+        }
+        else
+        {
+            // 3. Restaurer l'état original de l'icône
+            if (originalIconStates.TryGetValue(cellScript, out var originalState))
+            {
+                cellScript.iconRenderer.gameObject.SetActive(originalState.iconActive);
+                cellScript.iconRenderer.color = originalState.iconColor;
+                originalIconStates.Remove(cellScript); // Nettoyer
+            }
+        }
+    }
+
+    // Animation de retournement des cases
+    public IEnumerator FlipCellsAnimation(bool hide, bool rotation = true)
+    {
+        float duration = 0.3f;
+        float timer = 0f;
+
+        // Stocker les couleurs initiales des icônes pour les restaurer après
+        List<GameObject> futureRowCells = new List<GameObject>();
+
+        // 1. Trouver les futures rows
+        foreach (Transform child in transform)
+        {
+            Cell cellScript = child.GetComponent<Cell>();
+            if (cellScript != null && cellScript.row == -1)
+            {
+                futureRowCells.Add(child.gameObject);
+            }
+        }
+
+        List<Cell> allCells = new List<Cell>();
+        for (int r = 0; r < rows; r++)
+        {
+            for (int c = 0; c < columns; c++)
+            {
+                if (gridCells[r, c] != null)
+                    allCells.Add(gridCells[r, c].GetComponent<Cell>());
+            }
+        }
+        foreach (Transform child in transform)
+        {
+            Cell cellScript = child.GetComponent<Cell>();
+            if (cellScript != null && cellScript.row == -1)
+                allCells.Add(cellScript);
+        }
+
+        while (timer < duration)
+        {
+            // 2. Traiter les cellules normales
+            foreach (Cell cellScript in allCells)
+            {
+                if (cellScript == null) continue;
+
+                // Stocker la couleur originale
+                if (hide && !originalBackgroundColors.ContainsKey(cellScript))
+                {
+                    originalBackgroundColors[cellScript] = cellScript.backgroundRenderer.material.color;
+                }
+
+                // Masquer avec un noir
+                if (hide)
+                {
+                    cellScript.SetVisual(new Color(0.1f, 0.1f, 0.1f, 1f), 1f);
+                }
+                else if (originalBackgroundColors.ContainsKey(cellScript))
+                {
+                    cellScript.SetVisual(originalBackgroundColors[cellScript], 1f);
+                }
+
+                // Rotation et icônes (comme avant)
+                if(rotation)
+                {
+                    cellScript.transform.localRotation = Quaternion.Slerp(
+                        cellScript.transform.localRotation,
+                        Quaternion.Euler(0f, hide ? 180f : 0f, 0f),
+                        timer / duration
+                    );
+                }
+
+                if (hide)
+                {
+                    cellScript.iconRenderer.gameObject.SetActive(false);
+                }
+                else
+                {
+                    cellScript.iconRenderer.gameObject.SetActive(true);
+                }
+
+                // Restaurer le fond
+                if (originalBackgroundColors.TryGetValue(cellScript, out Color bgColor))
+                {
+                    cellScript.SetVisual(bgColor, 1f);
+                    originalBackgroundColors.Remove(cellScript); // Nettoyer
+                }
+
+                // Restaurer les icônes (ANNULE SetActive(false))
+                if (originalIconStates.TryGetValue(cellScript, out var originalState))
+                {
+                    cellScript.iconRenderer.gameObject.SetActive(true); // Force à true
+                    cellScript.iconRenderer.color = originalState.iconColor;
+                    originalIconStates.Remove(cellScript); // Nettoyer
+                }
+
+                // 3. Traiter les futures rows
+                if (hide)
+                {
+                    if (!originalBackgroundColors.ContainsKey(cellScript))
+                    {
+                        originalBackgroundColors[cellScript] = cellScript.backgroundRenderer.material.color;
+                    }
+                    cellScript.SetVisual(new Color(0.3f, 0.3f, 0.3f, 0.5f), 1f);
+                }
+                else if (originalBackgroundColors.ContainsKey(cellScript))
+                {
+                    cellScript.SetVisual(originalBackgroundColors[cellScript], 1f);
+                }
+
+                if(rotation)
+                {
+                    cellScript.transform.localRotation = Quaternion.Slerp(
+                        cellScript.transform.localRotation,
+                        Quaternion.Euler(0f, hide ? 180f : 0f, 0f),
+                        timer / duration
+                    );
+                }
+                //
+            }
+
+            timer += Time.deltaTime;
+            yield return null;
+        }
+
+        // Forcer les valeurs finales après l'animation
+        for (int r = 0; r < rows; r++)
+        {
+            for (int c = 0; c < columns; c++)
+            {
+                Cell cellScript = gridCells[r, c].GetComponent<Cell>();
+                if (cellScript == null) continue;
+
+                // Rotation finale
+                cellScript.transform.localRotation = Quaternion.Euler(0f, hide ? 180f : 0f, 0f);
+
+                // Masquage final de l'icône
+                if (originalIconStates.TryGetValue(cellScript, out var originalState))
+                {
+                    cellScript.iconRenderer.gameObject.SetActive(originalState.iconActive);
+                    cellScript.iconRenderer.color = originalState.iconColor;
+                    originalIconStates.Remove(cellScript); // Nettoyer
+                }
+
+                // Opacité finale du fond
+                if (cellScript.backgroundRenderer != null)
+                {
+                    Color finalBgColor = cellScript.backgroundRenderer.material.color;
+                    finalBgColor.a = hide ? 0.5f : 1f;
+                    cellScript.backgroundRenderer.material.color = finalBgColor;
+                }
+            }
+        }
     }
 }

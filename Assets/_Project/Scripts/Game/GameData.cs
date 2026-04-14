@@ -26,9 +26,15 @@ public enum EffectType
     Laser,
     LaserV,
     Spray,
+    Lightning,
     Random,
+    RandomWeapon,
+    Portal,
+    PortalWeapon,
     MegaJump,
     Invisibility,
+    DoubleDamage,
+    SightDisabled,
     CollisionDuel
 }
 
@@ -107,6 +113,8 @@ public struct PlayerState
     public int MaxHealth;
     public int Row;
     public int Col;
+    public int DestRow;
+    public int DestCol;
     public bool IsAlive;
     public bool IsAI;
     public int PoisonTurnsRemaining;
@@ -114,6 +122,7 @@ public struct PlayerState
     public int FreezeTurnsRemaining;
     public int MegaJumpTurnsRemaining;
     public int InvisibilityRemaining;
+    public int SightDisabledRemaining;
     public string Name;
 }
 
@@ -124,8 +133,9 @@ public class GameState
     public List<PlayerState> Players;
     public int Rows;
     public int Cols;
-    public bool HasDoneFirstTurn;
+    public bool CurrentSightDisabled;
     public CellEffect[] FutureRow;
     public List<CollisionDuel> CurrentDuels = new List<CollisionDuel>();
     public Dictionary<int, Position> PlayerFinalPositions = new Dictionary<int, Position>();
+    public int Seed;
 }

@@ -41,7 +41,7 @@ public class GameManager : MonoBehaviour
     // Variables
     private float rowTimer = 0f;
     private float selectionTimer = 0f;
-    private bool isSelectionPhase = true;
+    private bool isSelectionPhase = false;
     public GameObject[] players;
 
     private List<GameObject> highlightedBorders = new List<GameObject>();
@@ -74,6 +74,7 @@ public class GameManager : MonoBehaviour
     private bool _duelQueueRunning = false;
     
     private Action<bool, int, int, Position, int> _pendingDuelResultCallback = null;
+    private Dictionary<int, bool> playerSightDisabled = new Dictionary<int, bool>();
     public struct EffectEvent
     {
         public int playerId;
@@ -316,7 +317,8 @@ public class GameManager : MonoBehaviour
         GameObject playerObj = players[playerId];
         int launcherCol = -1;
         float mSpeed = 0f;
-        
+        float timer = 0f;
+
         switch(effectType)
         {
             case EffectType.HealthPotion:
@@ -411,7 +413,6 @@ public class GameManager : MonoBehaviour
                 break;
 
             case EffectType.Laser:
-
                 Debug.Log($"[Anim] Laser Joueur {playerId + 1}");
                 int laserRow = value; // row du lanceur
 
@@ -519,44 +520,107 @@ public class GameManager : MonoBehaviour
                 int launcherRow = _lastServerState.Players[playerId].Row;
                 float startZ = playerObj.transform.position.z;
 
-                // // --- Trouver les X d'arrêt pour le visuel ---
+                // --- Trouver les Z d'arrêt pour le visuel ---
                 float stopZUp = gridManager.GetCellWorldPosition(0, mCol).z; // row 0 = haut
                 float stopZDown = gridManager.GetCellWorldPosition(gridManager.rows - 1, mCol).z; // dernière row = bas
 
-
-                // // On cherche les cibles réelles dans le GameState pour arrêter les missiles dessus
+                // On cherche les cibles réelles dans le GameState pour arrêter les missiles dessus
                 foreach (var p in _lastServerState.Players)
                 {
                     if (p.ID == playerId || !p.IsAlive || p.Col != mCol) continue;
                     float pZ = gridManager.GetCellWorldPosition(p.Row, p.Col).z;
-                    if (p.Row < _lastServerState.Players[playerId].Row && pZ > stopZUp) stopZUp = pZ;
-                    if (p.Row > _lastServerState.Players[playerId].Row && pZ < stopZDown) stopZDown = pZ;
+                    // Si le joueur est AU-DESSUS du lanceur, on ajuste stopZUp
+                    if (p.Row < launcherRow && pZ < startZ) stopZUp = pZ;
+                    // Si le joueur est EN-DESSOUS du lanceur, on ajuste stopZDown
+                    if (p.Row > launcherRow && pZ > startZ) stopZDown = pZ;
                 }
 
-                // // 1. Lancement des deux projectiles
+                // 1. Lancement des deux projectiles
                 GameObject mUp = GameObject.CreatePrimitive(PrimitiveType.Capsule);
                 mUp.transform.position = playerObj.transform.position + Vector3.up * 0.5f;
-                mUp.transform.localScale = new Vector3(0.2f, 0.2f, 0.6f); // allongé sur Z
-                mUp.transform.rotation = Quaternion.Euler(90, 0, 0); // orienté Z
+                mUp.transform.localScale = new Vector3(0.2f, 0.2f, 0.6f);
+                mUp.transform.rotation = Quaternion.Euler(90, 0, 0);
                 mUp.GetComponent<Renderer>().material.color = Color.yellow;
 
                 GameObject mDown = Instantiate(mUp, mUp.transform.position, mUp.transform.rotation);
 
-                // // 2. Animation de déplacement simultanée
+                // 2. Animation de déplacement simultanée
                 mSpeed = 15f;
-                while (mUp.transform.position.z < stopZUp || mDown.transform.position.z > stopZDown)
+                while (mUp.transform.position.z > stopZUp || mDown.transform.position.z < stopZDown)
                 {
-                    if (mUp.transform.position.z < stopZUp)
-                        mUp.transform.position += Vector3.forward * mSpeed * Time.deltaTime;
+                    if (mUp.transform.position.z > stopZUp)
+                        mUp.transform.position += Vector3.back * mSpeed * Time.deltaTime; // Vers le haut = Z décroissant
 
-                    if (mDown.transform.position.z > stopZDown)
-                        mDown.transform.position += Vector3.back * mSpeed * Time.deltaTime;
+                    if (mDown.transform.position.z < stopZDown)
+                        mDown.transform.position += Vector3.forward * mSpeed * Time.deltaTime; // Vers le bas = Z croissant
 
                     yield return null;
                 }
 
-                // // 3. Explosion et Update
-                Destroy(mUp); Destroy(mDown);
+                // 3. Explosion et Update
+                Destroy(mUp);
+                Destroy(mDown);
+
+                foreach (var hit in hits)
+                {
+                    UpdatePlayerHealthBar(hit.PlayerId, hit.NewHealth);
+                }
+                break;
+
+            case EffectType.Lightning:
+                // Animation de soulèvement (coroutine rapide)
+                StartCoroutine(AnimationHelper.LaunchEffectAnimation(playerObj));
+
+                // 3. Attendre 0.5s pour l'effet de préparation
+                yield return new WaitForSeconds(0.5f);
+
+                // 4. Trouver la cible via hits[]
+                if (hits == null || hits.Length == 0) yield break;
+                var targetHit = hits[0]; // On suppose que hits[0] contient la cible de la foudre
+                GameObject targetPlayer = players[targetHit.PlayerId];
+                if (targetPlayer == null) yield break;
+
+                // 5. Créer l'éclair vertical (de haut en bas sur la cible)
+                GameObject lightningBolt = new GameObject("LightningBolt");
+                LineRenderer lineRenderer = lightningBolt.AddComponent<LineRenderer>();
+                lineRenderer.material = new Material(Shader.Find("Unlit/Color")) { color = new Color(0.5f, 0.8f, 1f) }; // Bleu électrique
+                lineRenderer.startWidth = 0.2f;
+                lineRenderer.endWidth = 0.05f;
+                lineRenderer.positionCount = 4; // 3 segments pour un éclair en zigzag
+
+                // Positions de l'éclair (zigzag depuis le ciel vers la cible)
+                Vector3 startPos = targetPlayer.transform.position + Vector3.up * 5f;
+                Vector3 midPos1 = startPos + new Vector3(UnityEngine.Random.Range(-1f, 1f), -2f, UnityEngine.Random.Range(-1f, 1f));
+                Vector3 midPos2 = midPos1 + new Vector3(UnityEngine.Random.Range(-1f, 1f), -2f, UnityEngine.Random.Range(-1f, 1f));
+                Vector3 endPos = targetPlayer.transform.position;
+
+                lineRenderer.SetPosition(0, startPos);
+                lineRenderer.SetPosition(1, midPos1);
+                lineRenderer.SetPosition(2, midPos2);
+                lineRenderer.SetPosition(3, endPos);
+
+                // Animation de l'éclair (clignotement)
+                StartCoroutine(AnimationHelper.LightningFlash(lineRenderer));
+                Destroy(lineRenderer.gameObject, 0.8f);
+
+                // 6. Effet d'impact sur la cible (éclat jaune)
+                // GameObject hitEffect = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                // hitEffect.transform.position = endPos;
+                // hitEffect.transform.localScale = Vector3.one * 0.4f;
+                // hitEffect.GetComponent<Renderer>().material.color = Color.yellow;
+                // Destroy(hitEffect, 0.3f);
+
+                Vector3 pos = targetPlayer.transform.position;
+                for (int i = 0; i < 3; i++)
+                {
+                    targetPlayer.transform.position += UnityEngine.Random.insideUnitSphere * 0.1f;
+                    yield return new WaitForEndOfFrame();
+                }
+                targetPlayer.transform.position = pos;
+
+                // 7. Nettoyage
+                Destroy(lightningBolt, 1.0f);
+                //Destroy(launchEffect, 0.5f);
 
                 foreach (var hit in hits)
                 {
@@ -624,7 +688,7 @@ public class GameManager : MonoBehaviour
 
                     // 3. Animation de pulsation (pour montrer que le bouclier est actif)
                     float pulseDuration = 0.5f;
-                    float timer = 0f;
+                    timer = 0f;
                     Vector3 originalScale = shieldSphere.transform.localScale;
 
                     while (timer < pulseDuration)
@@ -641,6 +705,7 @@ public class GameManager : MonoBehaviour
                 break;
 
             case EffectType.Random:
+            case EffectType.RandomWeapon:
                 Debug.Log($"[Anim] Random Joueur {playerId+1}");
                 
                 // Le serveur nous a envoyé le type final dans 'evt.value'
@@ -655,19 +720,22 @@ public class GameManager : MonoBehaviour
                 yield return new WaitForSeconds(1.0f); // Le temps de la roulette
                 Destroy(questionMark);
 
-                // 2. Changer visuellement la case en dessous du joueur 
-                Vector2Int pPos = GetPlayerCurrentCell(playerId);
-                
-                // ✅ Utiliser la nouvelle fonction du GridManager
-                if (gridManager != null)
+                if(!IsPlayerSightDisabled(playerId))
                 {
-                    gridManager.ForceCellVisual(pPos.x, pPos.y, finalType);
+                    // 2. Changer visuellement la case en dessous du joueur 
+                    Vector2Int pPos = GetPlayerCurrentCell(playerId);
+                    
+                    // ✅ Utiliser la nouvelle fonction du GridManager
+                    if (gridManager != null)
+                    {
+                        gridManager.ForceCellVisual(pPos.x, pPos.y, finalType);
+                    }
+                    
+                    // Petite pause "Révélation" avant que le vrai effet ne frappe
+                    yield return new WaitForSeconds(0.5f);
                 }
-                
-                // Petite pause "Révélation" avant que le vrai effet ne frappe
-                yield return new WaitForSeconds(0.5f);
                 break;
-                
+
             case EffectType.Invisibility:
                 if (playerId != localPlayerID) // les autres le voient disparaître
                 {
@@ -681,7 +749,107 @@ public class GameManager : MonoBehaviour
                     //yield return StartCoroutine(FadePlayer(playerObj, 1f, 0.35f, 0.5f));
                 }
                 break;
+
+            case EffectType.DoubleDamage:
+                Debug.Log($"[Anim] DoubleDamage Joueur {playerId+1}");
+                    if (!IsPlayerInvisible(playerId) || playerId == localPlayerID)
+                    {
+                        // 1. Créer un GameObject parent pour regrouper les effets
+                        GameObject doubleDamageFX = new GameObject("DoubleDamage_FX");
+                        doubleDamageFX.transform.parent = playerObj.transform;
+                        doubleDamageFX.transform.localPosition = Vector3.zero;
+
+                        // 2. Ajouter une aura de feu (particules ou halo)
+                        GameObject aura = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                        aura.transform.parent = doubleDamageFX.transform;
+                        aura.transform.localScale = Vector3.one * 1.2f;
+                        aura.transform.localPosition = Vector3.zero;
+
+                        // Matériau transparent et orange/rouge
+                        Material auraMat = new Material(Shader.Find("Legacy Shaders/Transparent/Diffuse"));
+                        auraMat.color = new Color(1f, 0.3f, 0f, 0.4f); // Orange transparent
+                        aura.GetComponent<Renderer>().material = auraMat;
+
+                        // 3. Ajouter des particules de feu autour du joueur (optionnel mais plus dynamique)
+                        for (int i = 0; i < 3; i++)
+                        {
+                            GameObject fireParticle = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                            fireParticle.transform.parent = doubleDamageFX.transform;
+                            fireParticle.transform.localPosition = UnityEngine.Random.insideUnitSphere * 0.6f;
+                            fireParticle.transform.localScale = Vector3.one * 0.15f;
+                            fireParticle.GetComponent<Renderer>().material.color = new Color(1f, 0.5f, 0f); // Orange vif
+
+                            // Animation de mouvement circulaire
+                            StartCoroutine(RotateAroundPlayer(fireParticle, doubleDamageFX.transform));
+                        }
+
+                        // 4. Animation de pulsation pour l'aura
+                        StartCoroutine(PulseAura(aura));
+                    }
+                break;
+
+            case EffectType.Portal:
+            case EffectType.PortalWeapon:
+                Debug.Log($"[Anim] Portal Joueur {playerId+1}");
+                int newRow = value / gridManager.columns;
+                int newCol = value % gridManager.columns;
+                // Lancer la téléportation
+                yield return StartCoroutine(TeleportPlayer(playerObj, newRow, newCol));
+                break;
+
+            case EffectType.SightDisabled:
+                Debug.Log($"[Anim] SightDisabled Joueur {playerId+1}");
+                StartCoroutine(AnimationHelper.LaunchEffectAnimation(playerObj));
+                // player himeself continue to see all, we can add a subtle effect to indicate the blindness
+                //todo hide cells for all players except playerId
+                if (playerId != localPlayerID)
+                {
+                    StartCoroutine(gridManager.FlipCellsAnimation(true));//gridManager.HideCellEffects();
+                    waitEffectSight = false;
+                }
+                break;
+    
         }
+    }
+
+    IEnumerator TeleportPlayer(GameObject playerObj, int newRow, int newCol)
+    {
+        // 1. Récupérer les positions
+        Vector3 oldPosition = playerObj.transform.position;
+        Vector3 newPosition = gridManager.GetCellWorldPosition(newRow, newCol);
+        newPosition.y = oldPosition.y; // Garder la même hauteur
+
+        // 2. Animation de disparition (clignotement rapide)
+        for (int i = 0; i < 3; i++)
+        {
+            playerObj.GetComponent<Renderer>().enabled = !playerObj.GetComponent<Renderer>().enabled;
+            yield return new WaitForSeconds(0.1f);
+        }
+        playerObj.GetComponent<Renderer>().enabled = true; // Réactiver le rendu
+
+        // 3. Effet de particules "portail" (sans prefab)
+        // Créer une sphère transparente pour simuler le portail
+        GameObject portalEffect = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        portalEffect.transform.position = oldPosition;
+        portalEffect.transform.localScale = Vector3.one * 0.8f;
+        Material portalMat = new Material(Shader.Find("Legacy Shaders/Transparent/Diffuse"));
+        portalMat.color = new Color(0.5f, 0f, 1f, 0.5f); // Violet transparent
+        portalEffect.GetComponent<Renderer>().material = portalMat;
+
+        // 4. Téléportation (déplacement instantané)
+        playerObj.transform.position = newPosition;
+
+        // 5. Effet de réapparition (halo blanc)
+        GameObject appearanceEffect = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        appearanceEffect.transform.position = newPosition;
+        appearanceEffect.transform.localScale = Vector3.one * 0.6f;
+        Material haloMat = new Material(Shader.Find("Legacy Shaders/Transparent/Diffuse"));
+        haloMat.color = new Color(1f, 1f, 1f, 0.4f); // Blanc transparent
+        appearanceEffect.GetComponent<Renderer>().material = haloMat;
+
+        // 6. Nettoyage (détruire les effets après un délai)
+        Destroy(portalEffect, 0.5f);
+        Destroy(appearanceEffect, 0.5f);
     }
 
     bool IsPlayerInvisible(int playerId)
@@ -689,6 +857,13 @@ public class GameManager : MonoBehaviour
         if (_lastServerState == null) return false;
         var p = _lastServerState.Players.Any(p => p.ID == playerId);
         return p && _lastServerState.Players.First(p => p.ID == playerId).InvisibilityRemaining > 0;
+    }
+
+    bool IsPlayerSightDisabled(int playerId)
+    {
+        if (_lastServerState == null) return false;
+        var p = _lastServerState.Players.Any(p => p.ID == playerId);
+        return p && _lastServerState.Players.First(p => p.ID == playerId).SightDisabledRemaining > 0;
     }
 
     IEnumerator MoveSprayParticle(GameObject p, Vector3 dir, float distance)
@@ -726,7 +901,9 @@ public class GameManager : MonoBehaviour
 
         // 2. Récupérer la position de la cellule de duel depuis l'état serveur
         var duelCell = _lastServerState.Players.First(p => p.ID == winnerId);
-        Vector3 duelCellPos = gridManager.GetCellWorldPosition(duelCell.Row, duelCell.Col);
+        var row = duelCell.DestRow != -1 ? duelCell.DestRow : duelCell.Row;
+        var col = duelCell.DestCol != -1 ? duelCell.DestCol : duelCell.Col;
+        Vector3 duelCellPos = gridManager.GetCellWorldPosition(row, col);
 
         // 3. Animation du gagnant : reste au centre
         float jumpWinDuration = 0.4f;
@@ -801,6 +978,24 @@ public class GameManager : MonoBehaviour
                 yield return StartCoroutine(FadePlayer(playerObj, 0f, 1f, 0.5f)); // réapparition en fondu
                 SetPlayerTint(playerObj, original);
                 break;
+
+            case EffectType.DoubleDamage:
+                Debug.Log($"[Anim] DoubleDamage Removed Joueur {playerId+1}");
+                foreach (Transform child in playerObj.transform)
+                {
+                    if (child.name == "DoubleDamage_FX")
+                        Destroy(child.gameObject);
+                }
+                break;
+
+            case EffectType.SightDisabled:
+                Debug.Log($"[Anim] SightDisabled Removed Joueur {playerId+1}");
+                if (playerId == localPlayerID)
+                {
+                    //gridManager.ShowCellEffects();
+                    StartCoroutine(gridManager.FlipCellsAnimation(false));
+                }
+                break;
         }
         yield return null; 
     }
@@ -813,6 +1008,41 @@ public class GameManager : MonoBehaviour
         {
             coinTransform.Rotate(Vector3.up * 720f * Time.deltaTime, Space.World);
             timer += Time.deltaTime;
+            yield return null;
+        }
+    }
+
+    IEnumerator PulseAura(GameObject aura)
+    {
+        float pulseDuration = 0.7f;
+        Vector3 originalScale = aura.transform.localScale;
+
+        while (true) // Boucle infinie jusqu'à destruction
+        {
+            float timer = 0f;
+            while (timer < pulseDuration)
+            {
+                float scaleMultiplier = 1f + Mathf.PingPong(timer * 3f, 0.15f);
+                aura.transform.localScale = originalScale * scaleMultiplier;
+                timer += Time.deltaTime;
+                yield return null;
+            }
+        }
+    }
+
+    IEnumerator RotateAroundPlayer(GameObject particle, Transform parent)
+    {
+        float speed = 2f;
+        float radius = 0.6f;
+
+        while (true)
+        {
+            float angle = Time.time * speed;
+            particle.transform.localPosition = new Vector3(
+                Mathf.Cos(angle) * radius,
+                0f,
+                Mathf.Sin(angle) * radius
+            );
             yield return null;
         }
     }
@@ -1143,9 +1373,6 @@ public class GameManager : MonoBehaviour
     void UpdateSelectionTimer()
     {
         selectionTimer = Mathf.Max(0f, selectionTimer - Time.deltaTime);
-
-        if (centralText != null)
-            centralText.text = $"CHOISISSEZ ! {Mathf.Max(0, selectionTimer):F1}s";
         
         if (timerSlider != null && !isDuelInProgress)
                 timerSlider.value = selectionTimer / selectionTime;
@@ -1163,65 +1390,25 @@ public class GameManager : MonoBehaviour
             EndSelectionPhase();
         }
     }
- 
-    
+
     void EndSelectionPhase()
     {
         isSelectionPhase = false;
         GameState state = _lastServerState;
-        
-        // 1. IA : Demander aux IA de remplir leurs PlayerActions
-        for (int i = 0; i < players.Length; i++)
-        {
-            if (playerControlModes[i] == ControlMode.AI && players[i].activeSelf 
-            && state.Players.Find(p => p.ID == i).FreezeTurnsRemaining == 0)
-            {
-                // On utilise ta logique IA actuelle pour obtenir une cible
-                Vector2Int aiTarget = DetermineAITarget(i);
-                SetPlayerTarget(i, aiTarget.x, aiTarget.y);
-            }
-        }
 
-         // 2. EXÉCUTER LA LOGIQUE DANS LE MOTEUR
-        // C'est ici que le "cerveau" travaille
-        //engine.ProcessTurn(currentTurnActions);////    // X XXXXXXXXXXXXXXXX ✅// ✅// ✅ // ✅// ✅// ✅
 
             // ✅ // ✅// ✅// ✅// ✅ // ✅// ✅// ✅// ✅ // ✅// ✅// ✅
-            if(currentTurnActions.Count > 0)
-            {
+            //if(currentTurnActions.Count > 0)
+            //{
                 SendActionsToServer(currentTurnActions);
-            }
+           // }
 
             // ✅ // ✅// ✅// ✅// ✅ // ✅// ✅// ✅// ✅ // ✅// ✅// ✅
 
         currentTurnActions.Clear(); // On vide pour le prochain tour
  
-        // 4. DEMANDER À UNITY D'ANIMER LE RÉSULTAT
-        // On utilise les données du moteur pour dire à Unity quoi faire
- 
-        //StartCoroutine(SyncUnityWithEngine(state));// X XXXXXXXXXXXXXXXX ✅// ✅// ✅ // ✅// ✅// ✅
-
-            // ✅ // ✅// ✅// ✅// ✅ // ✅// ✅// ✅// ✅ // ✅// ✅// ✅
-               // 1. Récupérer la ligne du haut depuis le moteur
-            // if(!hasDoneSpawnPlayers ) {
-            //     CellEffect[] topRowData = new CellEffect[state.Cols];
-            //     for(int c=0; c < state.Cols; c++) {
-            //         topRowData[c] = state.Grid[state.Rows - 1, c];
-            //     }
-
-            //     CellEffect[] newFutureRowData = state.FutureRow;
-            //     if (newFutureRowData == null || newFutureRowData.Length != state.Cols)
-            //     {
-            //         Debug.LogWarning("Le moteur n'a pas fourni de FutureRow valide. Utilisation d'un tableau vide.");
-            //         newFutureRowData = new CellEffect[state.Cols]; // Tableau vide par défaut
-            //     }
-            //     // 2. Passer cette ligne à Unity
-            //     gridManager.InsertRow(topRowData, newFutureRowData);
-            // }
-                // ✅ // ✅// ✅// ✅// ✅ // ✅// ✅// ✅// ✅ // ✅// ✅// ✅
     }
     
-    // ✅ // ✅// ✅// ✅// ✅ // ✅// ✅// ✅// ✅ // ✅// ✅// ✅
     private TaskCompletionSource<bool>? _turnCompletion;
     private async void SendActionsToServer(List<PlayerAction> actions)
     {
@@ -1306,7 +1493,10 @@ public class GameManager : MonoBehaviour
             CellEffect[] futureRow = newState.FutureRow;
             foreach (var pState in newState.Players)
             {
-                playerTargets[pState.ID] = new Vector2Int(pState.Row, pState.Col);
+                if (pState.DestRow != -1 && pState.DestCol != -1)
+                    playerTargets[pState.ID] = new Vector2Int(pState.DestRow, pState.DestCol); // jump vers cell portal
+                else
+                    playerTargets[pState.ID] = new Vector2Int(pState.Row, pState.Col);
             }
              // ✅ Convertir les events serveur en EffectEvent pour ta queue existante
             foreach (var evt in events)
@@ -1401,55 +1591,47 @@ public class GameManager : MonoBehaviour
             centralText.gameObject.SetActive(true);
             centralText.text = $"{winnerName} wins !";
             exitButton.gameObject.SetActive(true);
-            OnExitClicked();
         }
     }
-
-    // IEnumerator DuelSequence(bool isGold, int winnerId, int loserId, Position loserNewPos)
-    // {
-    //     // 1. Spin de la pièce
-    //     yield return StartCoroutine(DuelUIManager.Instance.SpinCoinAndClose(isGold));
-        
-    //     // 2. Ensuite seulement : anim du push
-    //     yield return StartCoroutine(ResolveDuelAnimation(winnerId, loserId, loserNewPos));
-        
-    //     yield return new WaitUntil(() => _allDuelsResolved);
-        
-    //     if (effectQueue.Count > 0)
-    //     {
-    //         yield return StartCoroutine(ProcessEffectQueue());
-    //     }
-    //     // 3. FINI : on peut reset
-    //     isDuelInProgress = false;
-    //     _allDuelsResolved = false;
-
-    //     // 4. Relancer la phase de sélection
-    //     StartSelectionPhase(_lastServerState);
-    //     //StartCoroutine(SyncUnityWithEngine(newState, topRow, futureRow));
-    // }
-
+    bool waitEffectSight = true;
     IEnumerator SyncUnityWithEngine(GameState state, CellEffect[] topRow, CellEffect[] futureRow)
     {
         Debug.Log("=== SYNC UNITY START ===");
             // 1. Désactiver les choix visuels (cyan/jaune)
         ClearHighlights();
 
-        // 1. Récupérer la ligne du haut depuis le moteur
-            // CellEffect[] topRowData = new CellEffect[state.Cols];
-            // for(int c=0; c < state.Cols; c++) {
-            //     topRowData[c] = state.Grid[state.Rows - 1, c];
-            // }
+        playerSightDisabled.Clear();
+        foreach (var player in state.Players)
+        {
+            playerSightDisabled[player.ID] = player.SightDisabledRemaining > 0;
+        }
 
-            // CellEffect[] newFutureRowData = state.FutureRow;
-            // if (newFutureRowData == null || newFutureRowData.Length != state.Cols)
-            // {
-            //     Debug.LogWarning("Le moteur n'a pas fourni de FutureRow valide. Utilisation d'un tableau vide.");
-            //     newFutureRowData = new CellEffect[state.Cols]; // Tableau vide par défaut
-            // }
-            // // 2. Passer cette ligne à Unity
-            // gridManager.InsertRow(topRowData, newFutureRowData);
-            gridManager.InsertRow(topRow, futureRow);
+        // if(playerSightDisabled.Count(x=>x.Value == true) == 0)
+        // {
+        //     waitEffectSight = false;
+        // }
+        //     yield return new WaitUntil(() => {  return !waitEffectSight; });
 
+        //todo if effectQueue contain an effect SightDisabled for a player, clear playerSightDisabled and wait for the animation to end before continue the sync, same for removeEffectQueue
+        // if (effectQueue.Any(e => e.effectType == EffectType.SightDisabled))
+        // {
+        //         playerSightDisabled.Clear();
+        //     //yield return new WaitUntil(() => { return !waitEffectSight; });
+        // }
+
+        gridManager.InsertRow(topRow, futureRow, playerSightDisabled);
+
+        if (!effectQueue.Any(e => e.effectType == EffectType.SightDisabled) && 
+            playerSightDisabled != null && playerSightDisabled.ContainsKey(localPlayerID) && playerSightDisabled[localPlayerID])
+        {
+            StartCoroutine(gridManager.FlipCellsAnimation(true, false));
+        }
+        else if(playerSightDisabled.ContainsKey(localPlayerID) && _lastServerState.CurrentSightDisabled)
+        {
+            //yield return new WaitForSeconds(0.4f);
+            StartCoroutine(gridManager.FlipCellsAnimation(false));
+        }
+ 
         areJumpsInProgress = true;
         // B. Faire sauter les joueurs vers leurs nouvelles positions calculées par le moteur
         foreach (var pState in state.Players)
@@ -1475,7 +1657,15 @@ public class GameManager : MonoBehaviour
                // --- CAS 1 : LE RICOCHET (Intrus 3 et 4) ---
                 if (intendedTarget.x != actualTarget.x || intendedTarget.y != actualTarget.y)
                 {
-                    StartCoroutine(ReboundAnimation(playerObj, intendedTarget, actualTarget));
+                    if(pState.DestRow != -1 && pState.DestCol != -1)//case teleport, maybe use PlayerFinalPositions instead ? tmp code
+                    {
+                        Vector3 targetPos = gridManager.GetCellWorldPosition(pState.DestRow, pState.DestCol);
+                        StartCoroutine(JumpToPosition(playerObj, targetPos));
+                    }
+                    else
+                    {
+                        StartCoroutine(ReboundAnimation(playerObj, intendedTarget, actualTarget));
+                    }
                 }
                 // --- CAS 2 : LE DUEL (Offset de 0.3) ---
                 else if (state.PlayerFinalPositions.ContainsKey(pState.ID))
@@ -1641,141 +1831,5 @@ public class GameManager : MonoBehaviour
         Debug.Log($"🔍 GetPlayerCurrentCell: résultat = ({cell.x},{cell.y})");
         
         return cell;
-    }
-
-    // Dans GameManager.cs
-    Vector2Int DetermineAITarget(int playerIndex)//TODO adjust and move the choice in server side later
-    {
-        // 1. Sécurité : vérifier que le joueur est valide
-        if (playerIndex < 0 || playerIndex >= players.Length || players[playerIndex] == null)
-        {
-            Debug.LogWarning($"⚠️ AI pour joueur {playerIndex} invalide");
-            return new Vector2Int(-1, -1);
-        }
-
-        Player aiPlayer = players[playerIndex].GetComponent<Player>();
-        Vector2Int currentCell = GetPlayerCurrentCell(playerIndex);
-
-        // 2. Récupérer TOUTES les cases atteignables (même rayon 2 que l'humain)
-        var radius = 3; // Rayon de sélection par défaut
-        if(_lastServerState != null)
-        {
-            var pState = _lastServerState.Players.FirstOrDefault(p => p.ID == playerIndex);
-            if (pState.MegaJumpTurnsRemaining > 0)
-            {
-                radius = 8;
-            }
-        }
-        List<Vector2Int> reachableCells = gridManager.GetCellsInRadius(currentCell, radius);
-
-        // 3. Si pas de case atteignable, rester sur place
-        if (reachableCells.Count == 0)
-        {
-            Debug.Log($"🤖 AI Joueur {playerIndex+1} ne peut bouger, reste sur place");
-            return currentCell;
-        }
-
-        // 4. 🎯 SCORER CHAQUE CASE (plus le score est élevé, mieux c'est)
-        Dictionary<Vector2Int, float> cellScores = new Dictionary<Vector2Int, float>();
-
-        foreach (Vector2Int cell in reachableCells)
-        {
-            float score = 0f;
-            int futureRow = cell.x + 1;
-            CellEffect effect;
-       
-            effect = gridManager.GetCellEffect(futureRow, cell.y);
-
-            // RÈGLES DE SCORING MODIFIABLES
-            switch (effect.type)
-            {
-                case EffectType.DamageBomb:
-                    score = -1000f; // 🚫 À ÉVITER ABSOLUMENT
-                    break;
-
-                case EffectType.Poison:
-                    score = -200f; // 🟣 On évite
-                    break;
-
-                case EffectType.Freeze:
-                    score = -100f; // 🟣 On évite
-                    break;
-
-                case EffectType.Armor:
-                    if (aiPlayer.health < 50)
-                        score = 800f; // Très prioritaire
-                    else if (aiPlayer.health < 80 && aiPlayer.health > 50)
-                        score = 150f;
-                    else
-                        score = 50f;
-                    break;
-
-                case EffectType.HealthPotion:
-                    // 🟢 Si l'IA a peu de PV, la potion vaut beaucoup plus cher
-                    if (aiPlayer.health < 50)
-                        score = 800f; // Très prioritaire
-                    else if (aiPlayer.health < 80 && aiPlayer.health > 50)
-                        score = 150f;
-                    else
-                        score = 50f;
-                    break;
-
-                case EffectType.Neutral:
-                    // 🟡 Petit bonus si on bouge vers l'avant pour ne pas rester coincé
-                    if (cell.x > currentCell.x)
-                        score = 50f;
-                    else
-                        score = 10f;
-                    break;
-
-                case EffectType.Random:
-                        score = 20f;
-                    break;
-
-                case EffectType.Invisibility:
-                case EffectType.MegaJump:
-                        score = 70f;
-                    break;
-
-                case EffectType.Missile:
-                case EffectType.MissileV:
-                case EffectType.Laser:
-                case EffectType.LaserV:
-                case EffectType.Spray:
-                    score = 75f; // 🟡 On autorise l'IA à prendre le missile pour attaquer les autres
-                    break;
-            }
-
-            cellScores.Add(cell, score);
-        }
-
-        // 5. Choisir la meilleure case (avec un peu de hasard pour ne pas être trop prévisible)
-        Vector2Int bestCell = currentCell;
-        float bestScore = -9999f;
-
-        // 15% de chance de choisir une case aléatoire parmi les 3 meilleures pour éviter l'IA parfaite
-        bool useRandom = UnityEngine.Random.value < 0.000000000015f;
-
-        if (useRandom)
-        {
-            var topCells = cellScores.OrderByDescending(kvp => kvp.Value).Take(3).ToList();
-            bestCell = topCells[UnityEngine.Random.Range(0, topCells.Count)].Key;
-            Debug.Log($"🤖 AI Joueur {playerIndex+1} choisit une case aléatoire pour varier !");
-        }
-        else
-        {
-            // Prendre la case avec le score le plus élevé
-            foreach (var kvp in cellScores)
-            {
-                if (kvp.Value > bestScore)
-                {
-                    bestScore = kvp.Value;
-                    bestCell = kvp.Key;
-                }
-            }
-        }
-        if (bestScore < 0) bestCell = currentCell;
-        Debug.Log($"🤖 AI Joueur {playerIndex+1} choisit ({bestCell.x},{bestCell.y}) | Score: {bestScore}");
-        return bestCell;
     }
 }

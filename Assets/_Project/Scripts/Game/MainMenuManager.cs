@@ -86,14 +86,16 @@ public class MainMenuManager : MonoBehaviour
             // Petit délai réaliste entre chaque "joignage"
             yield return new WaitForSeconds(0.5f); 
         }
+        //hack if the player click cancel before the end of the simulation
+        if (!mainMenuPanel.activeSelf)
+        {
+            // Connexion + envoi de la config Solo
+            SceneManager.LoadScene(gameSceneName);
+            wsClient.ConnectAndJoin("join", playerNickname);
 
-        // Connexion + envoi de la config Solo
-        SceneManager.LoadScene(gameSceneName);
-        wsClient.ConnectAndJoin("join", playerNickname);
-
-        // Une fois 4/4 atteint, on charge le jeu
-        yield return new WaitForSeconds(0.2f);
-
+            // Une fois 4/4 atteint, on charge le jeu
+            yield return new WaitForSeconds(0.2f);
+        }
     }
     
     public void OnClickMultiplayer()

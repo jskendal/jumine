@@ -297,7 +297,7 @@ Camera:
     height: 1
   near clip plane: 0.3
   far clip plane: 1000
-  field of view: 48
+  field of view: 36.5
   orthographic: 0
   orthographic size: 5
   m_Depth: -1
@@ -1076,8 +1076,12 @@ MonoBehaviour:
   playerPrefab: {fileID: 5615099790696861885, guid: 302d427791b749649836951496776e99, type: 3}
   networkClient: {fileID: 69597013}
   _gameStartReceived: 0
-  timeBetweenRows: 5
-  selectionTime: 5
+  selectionTime: 8
+  selectionTimesPerTurn:
+  - 8
+  - 6
+  - 4
+  turnsForEachTime: 030000000600000008000000
   mainCamera: {fileID: 406715754}
   cameraHeight: 15
   cameraDistance: 12
@@ -1529,7 +1533,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 0, y: -395}
+  m_AnchoredPosition: {x: -1019, y: -18}
   m_SizeDelta: {x: 160, y: 30}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1840229955
@@ -1685,6 +1689,7 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 1eb42822913bf754982ea421182133cb, type: 2}
   - {fileID: 11400000, guid: 741767a054327674f8a08937144c8be8, type: 2}
   - {fileID: 11400000, guid: 56e2e72a7ababcd47868e4f1f8d5ea51, type: 2}
+  - {fileID: 11400000, guid: 54114b077dc111444b5bd2eaff0c66cc, type: 2}
 --- !u!4 &2052283096
 Transform:
   m_ObjectHideFlags: 0

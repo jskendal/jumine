@@ -35,6 +35,7 @@ public enum EffectType
     Invisibility,
     DoubleDamage,
     SightDisabled,
+    InstantDeath,
     CollisionDuel
 }
 
@@ -45,6 +46,7 @@ public struct CellEffect
     public int value;       // Dégâts / Soin / Portée
     public float duration;  // Durée en secondes (pour Poison/Freeze)
     public bool isWeapon;   // True si c'est un Missile (touche les autres)
+    public bool isConsumed;
 }
 
 public struct EffectWeight 
@@ -139,3 +141,4 @@ public class GameState
     public Dictionary<int, Position> PlayerFinalPositions = new Dictionary<int, Position>();
     public int Seed;
 }
+

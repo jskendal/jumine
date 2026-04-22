@@ -10,7 +10,7 @@ using UnityEngine;
 public class SimpleWebSocketClient : MonoBehaviour
 {
     public string url = "ws://localhost:5000/ws";
-        //public string url = "ws://192.168.1.16:5000/ws";
+       // public string url = "ws://192.168.0.19:5000/ws";
     //public string url = "ws://167.160.186.47:5000/ws";
 
     public GameManager gameManager;

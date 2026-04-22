@@ -18,9 +18,12 @@ public class GameManager : MonoBehaviour
     private GameState _lastServerState;
     private bool isDuelInProgress = false;
 
-    [Header("Paramètres")]
-    public float timeBetweenRows = 5f;
-    public float selectionTime = 4f;
+ 
+    [SerializeField]
+    private float selectionTime = 8f;
+    [Header("Temps de sélection évolutif")]
+    [SerializeField] private float[] selectionTimesPerTurn = new float[] { 8f, 6f, 4f }; // Temps pour chaque palier
+    [SerializeField] private int[] turnsForEachTime = new int[] { 3, 6, 8 }; // Tours pour chaque palier
     
     [Header("Camera")]
     public Camera mainCamera;
@@ -318,6 +321,9 @@ public class GameManager : MonoBehaviour
         int launcherCol = -1;
         float mSpeed = 0f;
         float timer = 0f;
+        var playerCol = _lastServerState.Players[playerId].Col;
+        var playerRow = _lastServerState.Players[playerId].Row;
+        Vector3 originalPos = Vector3.zero;
 
         switch(effectType)
         {
@@ -355,7 +361,7 @@ public class GameManager : MonoBehaviour
             case EffectType.DamageBomb:
                 Debug.Log($"[Anim] Bomb Joueur {playerId+1}");
                 // Anim : secousse + flash rouge
-                Vector3 originalPos = playerObj.transform.position;
+                originalPos = playerObj.transform.position;
                 for (int i = 0; i < 3; i++)
                 {
                     playerObj.transform.position += UnityEngine.Random.insideUnitSphere * 0.1f;
@@ -366,6 +372,44 @@ public class GameManager : MonoBehaviour
                 UpdatePlayerHealthBar(playerId, newHealth);
                 break;
 
+            case EffectType.InstantDeath:
+                Debug.Log($"[Anim] Death Joueur {playerId+1}");
+              
+                // 1. Anim : Secousse + Flash Rouge + Icône de "Crâne"
+                originalPos = playerObj.transform.position;
+                Color originalColor = playerObj.GetComponent<Renderer>().material.color;
+
+                // Ajouter un crâne visuel (optionnel : un enfant GameObject avec une sprite de crâne)
+                GameObject skull = new GameObject("SkullDeathIndicator");
+                skull.transform.SetParent(playerObj.transform);
+                skull.transform.localPosition = Vector3.up * 0.5f;
+                SpriteRenderer skullRenderer = skull.AddComponent<SpriteRenderer>();
+                skullRenderer.sprite = Resources.Load<Sprite>("SkullSprite"); // Charge une sprite de crâne
+                skullRenderer.color = Color.red;
+
+                // Animation de secousse + clignotement rouge
+                for (int i = 0; i < 5; i++)
+                {
+                    playerObj.transform.position += UnityEngine.Random.insideUnitSphere * 0.05f;
+                    playerObj.GetComponent<Renderer>().material.color = Color.Lerp(originalColor, Color.red, 0.7f);
+                    yield return new WaitForSeconds(0.1f);
+                }
+
+                // 2. Effet "Fade Out" (disparition progressive)
+                float duration = 0.5f;
+                timer = 0f;
+                while (timer < duration)
+                {
+                    playerObj.GetComponent<Renderer>().material.color = Color.Lerp(Color.red, Color.clear, timer / duration);
+                    timer += Time.deltaTime;
+                    yield return null;
+                }
+
+                // 3. Nettoyage
+                Destroy(skull); // Supprime l'indicateur de crâne
+                UpdatePlayerHealthBar(playerId, 0); // Met à jour la barre de vie
+                break;
+            
             case EffectType.Spray:
                 Debug.Log($"[Anim] Spray Joueur {playerId+1}");
              
@@ -583,7 +627,8 @@ public class GameManager : MonoBehaviour
                 // 5. Créer l'éclair vertical (de haut en bas sur la cible)
                 GameObject lightningBolt = new GameObject("LightningBolt");
                 LineRenderer lineRenderer = lightningBolt.AddComponent<LineRenderer>();
-                lineRenderer.material = new Material(Shader.Find("Unlit/Color")) { color = new Color(0.5f, 0.8f, 1f) }; // Bleu électrique
+                //lineRenderer.material = new Material(Shader.Find("Unlit/Color")) { color = new Color(0.5f, 0.8f, 1f) }; // Bleu électrique Shader.Find("Legacy Shaders/Transparent/Diffuse")
+                lineRenderer.material = new Material(Shader.Find("Hidden/Internal-Colored")) { color = new Color(0.5f, 0.8f, 1f)};
                 lineRenderer.startWidth = 0.2f;
                 lineRenderer.endWidth = 0.05f;
                 lineRenderer.positionCount = 4; // 3 segments pour un éclair en zigzag
@@ -626,6 +671,7 @@ public class GameManager : MonoBehaviour
                 {
                     UpdatePlayerHealthBar(hit.PlayerId, hit.NewHealth);
                 }
+                MarkCellAsConsumed(playerRow, playerCol);
                 break;
 
             case EffectType.Freeze:
@@ -807,8 +853,19 @@ public class GameManager : MonoBehaviour
                     StartCoroutine(gridManager.FlipCellsAnimation(true));//gridManager.HideCellEffects();
                     waitEffectSight = false;
                 }
+                MarkCellAsConsumed(playerRow, playerCol);
                 break;
     
+        }
+
+
+    }
+
+    void MarkCellAsConsumed(int playerRow, int playerCol)
+    {
+        if (_lastServerState.Grid[playerRow, playerCol].isConsumed)
+        {
+            gridManager.MarkCellAsConsumed(playerRow, playerCol);
         }
     }
 
@@ -1017,7 +1074,7 @@ public class GameManager : MonoBehaviour
         float pulseDuration = 0.7f;
         Vector3 originalScale = aura.transform.localScale;
 
-        while (true) // Boucle infinie jusqu'à destruction
+        while (true && aura != null) // Boucle infinie jusqu'à destruction
         {
             float timer = 0f;
             while (timer < pulseDuration)
@@ -1035,7 +1092,7 @@ public class GameManager : MonoBehaviour
         float speed = 2f;
         float radius = 0.6f;
 
-        while (true)
+        while (true && particle != null)
         {
             float angle = Time.time * speed;
             particle.transform.localPosition = new Vector3(
@@ -1195,7 +1252,7 @@ public class GameManager : MonoBehaviour
         // Attendre le game_start du serveur
         while (!_gameStartReceived) yield return null;
 
-        ForceCameraPosition();
+        //ForceCameraPosition();
         SpawnPlayers();
         selectionTimer = selectionTime;
  
@@ -1388,6 +1445,24 @@ public class GameManager : MonoBehaviour
                 return;
             }
             EndSelectionPhase();
+            // Trouver le palier actuel
+            for (int i = 0; i < turnsForEachTime.Length; i++)
+            {
+                if (_lastServerState.CurrentTurn + 1 <= turnsForEachTime[i])
+                {
+                    if (i < selectionTimesPerTurn.Length)
+                    {
+                        selectionTime = selectionTimesPerTurn[i];
+                        return;
+                    }
+                }
+            }
+
+            // Si on dépasse tous les paliers, utiliser le dernier temps
+            if (selectionTimesPerTurn.Length > 0)
+            {
+                selectionTime = selectionTimesPerTurn[selectionTimesPerTurn.Length - 1];
+            }
         }
     }
 
@@ -1529,7 +1604,6 @@ public class GameManager : MonoBehaviour
             StartCoroutine(SyncUnityWithEngine(newState, topRow, futureRow));
             _turnCompletion?.TrySetResult(true);
             _lastServerState = newState;
-
         }
         else if(json.Contains("duel_result"))
         {

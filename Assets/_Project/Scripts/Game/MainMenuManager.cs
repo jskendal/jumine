@@ -5,7 +5,6 @@ using System.Collections;
 using System.Collections.Generic;
 using Newtonsoft.Json.Linq;
 using UnityEngine.UI;
-using System.Threading.Tasks;
 
 public class MainMenuManager : MonoBehaviour
 {
@@ -72,13 +71,13 @@ public class MainMenuManager : MonoBehaviour
         mainMenuPanel.SetActive(false);
         matchmakingPanel.SetActive(true);
 
-        StartCoroutine(SimulateSoloMatchmaking());
+        StartCoroutine(JoinGame());
     }
 
-    IEnumerator SimulateSoloMatchmaking()
+    IEnumerator JoinGame(int playersIn = 1)
     {
-        // Simulation des 4 joueurs qui rejoignent
-        for (int i = 1; i <= 4; i++)
+        // Simulation des X joueurs qui rejoignent
+        for (int i = playersIn; i <= 4; i++)
         {
             if (countPlayersText != null)
                 countPlayersText.text = $"{i}/4";
@@ -147,17 +146,15 @@ public class MainMenuManager : MonoBehaviour
         {
             var root = Newtonsoft.Json.Linq.JObject.Parse(json);
             string op = root["op"]?.ToString();
-
+            int playerCount = root["playerCount"]?.Value<int>() ?? 0;
+            
             switch (op)
             {
                 case "queue_update":
-                    int count = root["count"]?.Value<int>() ?? 0;
-                    playersInQueue = count;
-                    UpdateQueueCount(count);
+                    UpdateQueueCount(playerCount);
                     break;
 
                 case "show_fill_ai_btn":
-                    int playerCount = root["playerCount"]?.Value<int>() ?? 0;
                     ShowFillAiButton(playerCount);
                     break;
 
@@ -168,9 +165,7 @@ public class MainMenuManager : MonoBehaviour
 
                 case "match_found":
                     Debug.Log("Tous les joueurs ont accepté !");
-                    // Connexion + envoi de la config Solo
-                    wsClient.ConnectAndJoin("join", playerNickname);
-                    SceneManager.LoadScene(gameSceneName);
+                    StartCoroutine(JoinGame(playerCount));
                     break;
             }
         }

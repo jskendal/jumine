@@ -301,11 +301,12 @@ public class GridManager : MonoBehaviour
         
         // Créer un CUBE PLEIN cyan transparent
         GameObject border = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        
         border.transform.position = cellPos;
         border.transform.localScale = new Vector3(cellSize * 0.95f, 0.02f, cellSize * 0.95f);
         
         // Material semi-transparent CYAN
-        Material mat = new Material(Shader.Find("Standard"));
+        Material mat = new Material(Shader.Find("Sprites/Default"));
         mat.color = new Color(0, 1, 1, 0.3f); // Cyan transparent
         
         // Configurer pour la transparence
@@ -402,6 +403,22 @@ public class GridManager : MonoBehaviour
                 cellScript.iconRenderer.color = originalState.iconColor;
                 originalIconStates.Remove(cellScript); // Nettoyer
             }
+        }
+    }
+
+    public void MarkCellAsConsumed(int row, int col)
+    {
+        Cell cellScript = gridCells[row, col].GetComponent<Cell>();
+
+        // ✅ Appliquer un gris semi-transparent par-dessus la couleur et l'icône
+        // (Tu peux ajuster l'alpha pour plus ou moins de transparence)
+        Color grayOverlay = new Color(0.5f, 0.5f, 0.5f, 0.6f); // Gris semi-transparent
+        cellScript.SetVisual(cellScript.backgroundRenderer.material.color * grayOverlay, 1f); // Fond
+
+        // ✅ Désactiver l'icône de l'effet (optionnel, selon ton design)
+        if (cellScript.iconRenderer != null)
+        {
+            cellScript.iconRenderer.color = cellScript.iconRenderer.color * grayOverlay;
         }
     }
 
@@ -555,4 +572,5 @@ public class GridManager : MonoBehaviour
             }
         }
     }
+
 }

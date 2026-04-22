@@ -108,7 +108,6 @@ public class Cell : MonoBehaviour
             if (oldSelectedBorder != null)
             {
                 oldSelectedBorder.tag = "Untagged";
-                // 🔥 LE FIX DU NOM EST ICI 🔥
                 oldSelectedBorder.name = oldSelectedBorder.name.Replace("Selected", "Selectable");
                 oldSelectedBorder.GetComponent<Renderer>().material.color = new Color(0, 1, 1, 0.3f);
             }
